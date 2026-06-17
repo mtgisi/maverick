@@ -13,4 +13,14 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /api/calendar/calendars?account=label
+router.get('/calendars', async (req, res) => {
+  try {
+    const data = await gcal.listCalendars({ account: req.query.account });
+    res.json(data);
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
 module.exports = router;

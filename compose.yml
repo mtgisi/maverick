@@ -17,7 +17,24 @@ services:
     networks:
       - proxy
 
+  # Self-hosted speech-to-text for watch dictation (private; audio never leaves the server).
+  # Internal only — no Caddy block, not exposed publicly. Model cached in the named volume.
+  whisper:
+    image: onerahmet/openai-whisper-asr-webservice:latest
+    container_name: maverick-whisper
+    restart: unless-stopped
+    environment:
+      ASR_MODEL: base
+      ASR_ENGINE: openai_whisper
+    volumes:
+      - whisper-cache:/root/.cache
+    networks:
+      - proxy
+
 networks:
   proxy:
     external: true
     name: proxy
+
+volumes:
+  whisper-cache:

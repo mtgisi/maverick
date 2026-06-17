@@ -15,38 +15,83 @@ function dayBounds(dateStr) {
   return { day, timeMin: start.toISOString(), timeMax: end.toISOString() };
 }
 
+// List all calendars across one or all connected accounts.
+async function listCalendars({ account } = {}) {
+  const entries = account ? [oauth.clientFor(account)].filter(Boolean) : oauth.allClients();
+  if (!entries.length) return { connected: false, calendars: [] };
+
+  const out = [];
+  for (const { client, account: acct } of entries) {
+    try {
+      const cal = google.calendar({ version: 'v3', auth: client });
+      const { data } = await cal.calendarList.list();
+      for (const c of (data.items || [])) {
+        out.push({
+          id: c.id,
+          summary: c.summary || c.id,
+          primary: !!c.primary,
+          accessRole: c.accessRole || '',
+          account: acct.label || acct.email,
+        });
+      }
+    } catch (e) {
+      out.push({ error: `calendars ${acct.label || acct.email}: ${e.message}` });
+    }
+  }
+  return { connected: true, calendars: out };
+}
+
 // List events across one or all connected accounts for a given local day.
-async function listEvents({ account, date } = {}) {
+// When calendarId is omitted, enumerates every calendar on each account; otherwise queries just that one.
+async function listEvents({ account, date, calendarId } = {}) {
   const entries = account ? [oauth.clientFor(account)].filter(Boolean) : oauth.allClients();
   if (!entries.length) return { connected: false, events: [] };
   const { day, timeMin, timeMax } = dayBounds(date);
 
+  const MAX_TOTAL = 50;
+  const PER_CAL = 25;
   const all = [];
   for (const { client, account: acct } of entries) {
+    const acctName = acct.label || acct.email;
     try {
       const cal = google.calendar({ version: 'v3', auth: client });
-      const { data } = await cal.events.list({
-        calendarId: 'primary', timeMin, timeMax, singleEvents: true, orderBy: 'startTime', maxResults: 50,
-      });
-      for (const ev of (data.items || [])) {
-        const startISO = ev.start && (ev.start.dateTime || ev.start.date);
-        all.push({
-          id: ev.id,
-          account: acct.label || acct.email,
-          title: ev.summary || '(no title)',
-          location: ev.location || '',
-          start: startISO,
-          allDay: !!(ev.start && ev.start.date && !ev.start.dateTime),
-          time: startISO ? new Date(startISO).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' }) : '',
-          hangoutLink: ev.hangoutLink || '',
-        });
+      // Resolve which calendars to query: the explicit one, or all of this account's calendars.
+      let cals;
+      if (calendarId) {
+        cals = [{ id: calendarId, summary: calendarId }];
+      } else {
+        const { data } = await cal.calendarList.list();
+        cals = (data.items || []).map(c => ({ id: c.id, summary: c.summary || c.id }));
+      }
+      for (const c of cals) {
+        try {
+          const { data } = await cal.events.list({
+            calendarId: c.id, timeMin, timeMax, singleEvents: true, orderBy: 'startTime', maxResults: PER_CAL,
+          });
+          for (const ev of (data.items || [])) {
+            const startISO = ev.start && (ev.start.dateTime || ev.start.date);
+            all.push({
+              id: ev.id,
+              account: acctName,
+              calendar: c.summary,
+              title: ev.summary || '(no title)',
+              location: ev.location || '',
+              start: startISO,
+              allDay: !!(ev.start && ev.start.date && !ev.start.dateTime),
+              time: startISO ? new Date(startISO).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' }) : '',
+              hangoutLink: ev.hangoutLink || '',
+            });
+          }
+        } catch (e) {
+          all.push({ error: `calendar ${acctName}/${c.summary}: ${e.message}` });
+        }
       }
     } catch (e) {
-      all.push({ error: `calendar ${acct.label || acct.email}: ${e.message}` });
+      all.push({ error: `calendar ${acctName}: ${e.message}` });
     }
   }
   all.sort((a, b) => (a.start || '').localeCompare(b.start || ''));
-  return { connected: true, day, events: all };
+  return { connected: true, day, events: all.slice(0, MAX_TOTAL) };
 }
 
 // Create a Gmail DRAFT (never sends). Returns the draft id.
@@ -90,4 +135,4 @@ async function listDrafts({ account, max = 20 } = {}) {
   return { connected: true, drafts: out };
 }
 
-module.exports = { listEvents, createDraft, listDrafts };
+module.exports = { listCalendars, listEvents, createDraft, listDrafts };

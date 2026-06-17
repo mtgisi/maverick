@@ -47,6 +47,10 @@ const TOOLS = [
       new_value: { type: 'string', description: 'Full ISO-8601 UTC instant.' },
       summary: { type: 'string', description: 'Friendly local-time summary, e.g. "Clock-out 5:34 PM -> 6:34 PM".' },
     }, required: ['entry_id', 'field', 'new_value'] } },
+  { name: 'list_calendars', description: "List all of Matthew's Google calendars across connected accounts.",
+    inputSchema: { type: 'object', properties: {
+      account: { type: 'string', description: 'Optional account label/email; omit for all.' },
+    } } },
   { name: 'list_calendar_events', description: 'Read Google Calendar events for a day across connected accounts.',
     inputSchema: { type: 'object', properties: {
       date: { type: 'string', description: 'YYYY-MM-DD (local). Omit for today.' },
@@ -135,6 +139,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         db.prepare(`INSERT INTO pending_changes (conversation_id, entry_id, field, old_value, new_value, summary, status)
                     VALUES (?,?,?,?,?,?, 'pending')`).run(CONV, a.entry_id, a.field, old, a.new_value, summary);
         return text(`Proposed (awaiting confirmation): ${summary}`);
+      }
+      case 'list_calendars': {
+        const res = await gcal.listCalendars({ account: a.account });
+        if (!res.connected) return text('No Google account connected yet. Connect one in Settings.');
+        if (!res.calendars.length) return text('(no calendars)');
+        return text(res.calendars.map(c => c.error ? `(! ${c.error})` : `- ${c.summary}${c.primary ? ' (primary)' : ''} [${c.account}]`).join('\n'));
       }
       case 'list_calendar_events': {
         const res = await gcal.listEvents({ account: a.account, date: a.date });

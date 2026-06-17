@@ -37,4 +37,5 @@ module.exports = {
   },
   dockerTool: String(process.env.ENABLE_DOCKER_TOOL || '').toLowerCase() === 'true',
   deviceToken: process.env.DEVICE_TOKEN || '',
+  whisperUrl: process.env.WHISPER_URL || 'http://maverick-whisper:9000',
 };

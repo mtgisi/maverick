@@ -9,7 +9,7 @@
     "vender": "matthewgisi",
     "description": "Glance at your day and dictate to Maverick from your wrist."
   },
-  "permissions": [],
+  "permissions": ["device:os.mic"],
   "runtime": {
     "apiVersion": { "compatible": "4.0", "target": "4.0", "minVersion": "4.0" }
   },

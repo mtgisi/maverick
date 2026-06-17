@@ -1,5 +1,5 @@
 /* Maverick service worker — minimal app-shell cache. Network-first for API; cache-first for assets. */
-const CACHE = 'maverick-v1';
+const CACHE = 'maverick-v2';
 const SHELL = ['/', '/styles.css', '/app.js', '/manifest.webmanifest', '/icons/icon.svg'];
 
 self.addEventListener('install', e => {

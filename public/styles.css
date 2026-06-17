@@ -9,11 +9,12 @@
   --safe-top:env(safe-area-inset-top,0px); --safe-bot:env(safe-area-inset-bottom,0px);
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%}
+html,body{height:100%;max-width:100%;overflow-x:hidden;-webkit-text-size-adjust:100%}
 body{
   background:radial-gradient(120% 60% at 50% 0%,#1b160e 0%,var(--bg) 60%);
   color:var(--ink);font-family:var(--ui);-webkit-font-smoothing:antialiased;overflow:hidden;
 }
+.app{max-width:100vw;overflow-x:hidden}
 .scroll::-webkit-scrollbar,.drawer-body::-webkit-scrollbar{width:0;height:0}
 button,input{font-family:inherit;color:inherit}
 .mono{font-family:var(--mono)} .serif{font-family:var(--serif)}
@@ -137,8 +138,8 @@ button,input{font-family:inherit;color:inherit}
 .drawer-item .r{font-size:13px;color:var(--dim)}
 .signout{padding:18px 22px 30px;font-size:13px;color:#cf8a6a;cursor:pointer}
 
-/* ===== Desktop ===== */
-@media (min-width:880px){
+/* ===== Desktop (only on real pointer devices — touch phones never get this layout) ===== */
+@media (min-width:880px) and (pointer:fine){
   body{overflow:hidden}
   .app{max-width:100%}
   .sidebar{display:flex;flex-direction:column;width:248px;flex:0 0 248px;border-right:1px solid var(--line);padding:22px 16px;gap:3px}
@@ -166,8 +167,8 @@ button,input{font-family:inherit;color:inherit}
   .head{display:none}                /* greeting moves to topbar on desktop */
   .lead h2{font-size:34px}
 }
-@media (min-width:880px){ .mobile-only{display:none} }
-@media (max-width:879px){ .desktop-only{display:none} }
+@media (min-width:880px) and (pointer:fine){ .mobile-only{display:none} }
+@media (max-width:879px), (pointer:coarse){ .desktop-only{display:none} }
 
 /* ===== Animations ===== */
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(230,169,44,.5)}70%{box-shadow:0 0 0 12px rgba(230,169,44,0)}100%{box-shadow:0 0 0 0 rgba(230,169,44,0)}}

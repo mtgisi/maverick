@@ -5,23 +5,26 @@
     "appName": "Maverick",
     "appType": "app",
     "version": { "code": 1, "name": "0.1.0" },
-    "icon": "assets/icon.png",
+    "icon": "icon.png",
     "vender": "matthewgisi",
     "description": "Glance at your day and dictate to Maverick from your wrist."
   },
   "permissions": ["device:os.network"],
   "runtime": {
-    "apiVersion": { "compatible": "3.0.0", "target": "3.0.0", "minVersion": "3.0.0" }
+    "apiVersion": { "compatible": "4.0", "target": "4.0", "minVersion": "4.0" }
   },
   "targets": {
-    "amazfit-active-2": {
+    "default": {
       "module": {
         "page": { "pages": ["page/index"] }
       },
       "platforms": [
-        { "name": "amazfit active 2", "deviceSource": 8585218 }
-      ],
-      "designWidth": 466
+        { "st": "r", "dw": 466 }
+      ]
     }
-  }
+  },
+  "i18n": {
+    "en-US": { "appName": "Maverick" }
+  },
+  "defaultLanguage": "en-US"
 }

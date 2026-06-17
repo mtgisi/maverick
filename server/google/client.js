@@ -75,12 +75,13 @@ async function listEvents({ account, date, calendarId, scope = 'mine' } = {}) {
 
   const MAX_TOTAL = 50;
   const PER_CAL = 25;
+  const MAX_CALS = 30;   // cap calendars queried per account (you have many resource calendars)
   const all = [];
-  for (const { client, account: acct } of entries) {
+  // Query accounts AND their calendars concurrently — sequential was ~26s with 30+ calendars.
+  await Promise.all(entries.map(async ({ client, account: acct }) => {
     const acctName = acct.label || acct.email;
     try {
       const cal = google.calendar({ version: 'v3', auth: client });
-      // Resolve which calendars to query: the explicit one, or this account's calendars filtered by scope.
       let cals;
       if (calendarId) {
         cals = [{ id: calendarId, summary: calendarId, kind: 'owned' }];
@@ -89,9 +90,10 @@ async function listEvents({ account, date, calendarId, scope = 'mine' } = {}) {
         cals = (data.items || [])
           .map(c => ({ id: c.id, summary: c.summary || c.id, kind: calKind(c) }))
           // 'mine' also peeks at shared calendars (for events you're invited to); resource is excluded unless asked.
-          .filter(c => scopeAllows(c.kind, scope) || (scope === 'mine' && c.kind === 'shared'));
+          .filter(c => scopeAllows(c.kind, scope) || (scope === 'mine' && c.kind === 'shared'))
+          .slice(0, MAX_CALS);
       }
-      for (const c of cals) {
+      await Promise.all(cals.map(async (c) => {
         // On shared calendars under the default 'mine' scope, keep only events you're actually a part of.
         const selfOnly = !calendarId && scope === 'mine' && c.kind === 'shared';
         try {
@@ -121,11 +123,11 @@ async function listEvents({ account, date, calendarId, scope = 'mine' } = {}) {
         } catch (e) {
           all.push({ error: `calendar ${acctName}/${c.summary}: ${e.message}` });
         }
-      }
+      }));
     } catch (e) {
       all.push({ error: `calendar ${acctName}: ${e.message}` });
     }
-  }
+  }));
   all.sort((a, b) => (a.start || '').localeCompare(b.start || ''));
   return { connected: true, day, events: all.slice(0, MAX_TOTAL) };
 }

@@ -7,7 +7,7 @@ import { API_BASE, DEVICE_TOKEN } from '../config';
 let netFetch = null;
 try { netFetch = require('@zos/network').fetch; } catch (e) { netFetch = null; }
 
-const W = 466, CX = 233;
+const W = 480, CX = 240;
 const GOLD = 0xe6a92c, INK = 0xf4eee2, MUTED = 0xa39b8b, FAINT = 0x8f8674, DIM = 0x6f6a5e, SAGE = 0x9ca980, CARD = 0x1d1810;
 
 // The five glance pages (mirrors the Aureo Watch design).

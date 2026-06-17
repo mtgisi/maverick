@@ -1,7 +1,7 @@
 {
   "configVersion": "v3",
   "app": {
-    "appId": 1000001,
+    "appId": 31415,
     "appName": "Maverick",
     "appType": "app",
     "version": { "code": 1, "name": "0.1.0" },
@@ -9,7 +9,7 @@
     "vender": "matthewgisi",
     "description": "Glance at your day and dictate to Maverick from your wrist."
   },
-  "permissions": ["device:os.network"],
+  "permissions": [],
   "runtime": {
     "apiVersion": { "compatible": "4.0", "target": "4.0", "minVersion": "4.0" }
   },
@@ -19,7 +19,7 @@
         "page": { "pages": ["page/index"] }
       },
       "platforms": [
-        { "st": "r", "dw": 466 }
+        { "st": "r", "dw": 480 }
       ]
     }
   },

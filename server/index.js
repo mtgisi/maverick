@@ -72,7 +72,7 @@ app.get('/login', (req, res) => {
     *{box-sizing:border-box;margin:0;padding:0}
     body{background:radial-gradient(120% 60% at 50% 0%,#1b160e 0%,#0f0c07 60%);color:#f4eee2;font-family:'Hanken Grotesk',system-ui,sans-serif;display:grid;place-items:center;height:100vh}
     .b{text-align:center;padding:48px 40px}
-    .logo{width:72px;height:72px;border-radius:50%;margin:0 auto 22px;background:radial-gradient(circle at 35% 30%,#f3c45a,#e6a92c 55%,#b9831a);box-shadow:0 0 60px -10px rgba(230,169,44,.6)}
+    .logo{width:84px;height:84px;margin:0 auto 18px;background:url(/icons/compass.svg) center/contain no-repeat}
     h1{font-family:'Instrument Serif',serif;font-size:46px;font-weight:400;letter-spacing:-.01em}
     .d{color:#a39b8b;font-size:14px;margin:6px 0 30px}
     a{display:inline-flex;align-items:center;gap:10px;background:#e6a92c;color:#141109;padding:12px 24px;border-radius:11px;text-decoration:none;font-weight:700;font-size:14px}

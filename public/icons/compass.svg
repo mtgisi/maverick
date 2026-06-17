@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100" fill="none">
+  <line x1="50" y1="8" x2="50" y2="18" stroke="#e6a92c" stroke-width="3" stroke-linecap="round"/>
+  <line x1="92" y1="50" x2="82" y2="50" stroke="#e6a92c" stroke-width="3" stroke-linecap="round"/>
+  <line x1="50" y1="92" x2="50" y2="82" stroke="#e6a92c" stroke-width="3" stroke-linecap="round"/>
+  <line x1="8" y1="50" x2="18" y2="50" stroke="#e6a92c" stroke-width="3" stroke-linecap="round"/>
+  <line x1="79.7" y1="20.3" x2="74" y2="26" stroke="#9ca980" stroke-width="2.2" stroke-linecap="round"/>
+  <line x1="79.7" y1="79.7" x2="74" y2="74" stroke="#9ca980" stroke-width="2.2" stroke-linecap="round"/>
+  <line x1="20.3" y1="79.7" x2="26" y2="74" stroke="#9ca980" stroke-width="2.2" stroke-linecap="round"/>
+  <line x1="20.3" y1="20.3" x2="26" y2="26" stroke="#9ca980" stroke-width="2.2" stroke-linecap="round"/>
+  <circle cx="50" cy="50" r="40" stroke="#e6a92c" stroke-width="4" opacity="0.55"/>
+  <path d="M50 24 C52 42 58 48 76 50 C58 52 52 58 50 76 C48 58 42 52 24 50 C42 48 48 42 50 24 Z" fill="#e6a92c" opacity="0.3"/>
+  <path d="M50 24 C52 42 58 48 76 50 C58 52 52 58 50 76 C48 58 42 52 24 50 C42 48 48 42 50 24 Z" stroke="#f0b840" stroke-width="2" fill="none" opacity="0.9"/>
+  <path d="M50 18 L58 50 L50 82 L42 50 Z" fill="#0e0b06" opacity="0.55"/>
+  <path d="M50 22 L45 50 L50 50 Z" fill="#f9da7e"/>
+  <path d="M50 22 L55 50 L50 50 Z" fill="#bd8a26"/>
+  <path d="M50 78 L45 50 L50 50 Z" fill="#b3be94"/>
+  <path d="M50 78 L55 50 L50 50 Z" fill="#6c7a53"/>
+  <circle cx="50" cy="50" r="4" fill="#f4eee2"/>
+</svg>

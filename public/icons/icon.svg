@@ -1,13 +1,31 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
   <defs>
     <radialGradient id="bg" cx="50%" cy="18%" r="100%">
-      <stop offset="0%" stop-color="#1b160e"/><stop offset="65%" stop-color="#0f0c07"/>
-    </radialGradient>
-    <radialGradient id="disc" cx="35%" cy="30%" r="75%">
-      <stop offset="0%" stop-color="#f3c45a"/><stop offset="55%" stop-color="#e6a92c"/><stop offset="100%" stop-color="#b9831a"/>
+      <stop offset="0%" stop-color="#1b160e"/><stop offset="60%" stop-color="#141109"/><stop offset="100%" stop-color="#0f0c07"/>
     </radialGradient>
   </defs>
-  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
-  <circle cx="256" cy="232" r="118" fill="url(#disc)"/>
-  <text x="256" y="430" text-anchor="middle" font-family="Georgia,'Instrument Serif',serif" font-size="120" fill="#f4eee2">M</text>
+  <rect width="512" height="512" rx="118" fill="url(#bg)"/>
+  <g transform="translate(71.5,71.5) scale(3.69)" fill="none">
+    <!-- tick graduations (behind ring) -->
+    <line x1="50" y1="8"  x2="50" y2="18" stroke="#e6a92c" stroke-width="3" stroke-linecap="round"/>
+    <line x1="92" y1="50" x2="82" y2="50" stroke="#e6a92c" stroke-width="3" stroke-linecap="round"/>
+    <line x1="50" y1="92" x2="50" y2="82" stroke="#e6a92c" stroke-width="3" stroke-linecap="round"/>
+    <line x1="8"  y1="50" x2="18" y2="50" stroke="#e6a92c" stroke-width="3" stroke-linecap="round"/>
+    <line x1="79.7" y1="20.3" x2="74" y2="26" stroke="#9ca980" stroke-width="2.2" stroke-linecap="round"/>
+    <line x1="79.7" y1="79.7" x2="74" y2="74" stroke="#9ca980" stroke-width="2.2" stroke-linecap="round"/>
+    <line x1="20.3" y1="79.7" x2="26" y2="74" stroke="#9ca980" stroke-width="2.2" stroke-linecap="round"/>
+    <line x1="20.3" y1="20.3" x2="26" y2="26" stroke="#9ca980" stroke-width="2.2" stroke-linecap="round"/>
+    <!-- bezel ring -->
+    <circle cx="50" cy="50" r="40" stroke="#e6a92c" stroke-width="4" opacity="0.55"/>
+    <!-- rose: fill + outline -->
+    <path d="M50 24 C52 42 58 48 76 50 C58 52 52 58 50 76 C48 58 42 52 24 50 C42 48 48 42 50 24 Z" fill="#e6a92c" opacity="0.3"/>
+    <path d="M50 24 C52 42 58 48 76 50 C58 52 52 58 50 76 C48 58 42 52 24 50 C42 48 48 42 50 24 Z" stroke="#f0b840" stroke-width="2" fill="none" opacity="0.9"/>
+    <!-- faceted needle + dark separator + hub -->
+    <path d="M50 18 L58 50 L50 82 L42 50 Z" fill="#0e0b06" opacity="0.55"/>
+    <path d="M50 22 L45 50 L50 50 Z" fill="#f9da7e"/>
+    <path d="M50 22 L55 50 L50 50 Z" fill="#bd8a26"/>
+    <path d="M50 78 L45 50 L50 50 Z" fill="#b3be94"/>
+    <path d="M50 78 L55 50 L50 50 Z" fill="#6c7a53"/>
+    <circle cx="50" cy="50" r="4" fill="#f4eee2"/>
+  </g>
 </svg>

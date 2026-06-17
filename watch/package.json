@@ -1,0 +1,12 @@
+{
+  "name": "maverick-watch",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Maverick watch companion (Zepp OS, Amazfit Active 2)",
+  "dependencies": {
+    "@zeppos/zml": "^1.1.0"
+  },
+  "devDependencies": {
+    "@zeppos/device-types": "latest"
+  }
+}

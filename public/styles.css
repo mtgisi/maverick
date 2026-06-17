@@ -90,6 +90,7 @@ button,input{font-family:inherit;color:inherit}
 .chat{display:flex;flex-direction:column;gap:12px;min-height:100%}
 .chat .who{display:flex;align-items:center;gap:10px;padding:6px 2px 10px}
 .chat .who .a{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--gold),var(--sage));display:flex;align-items:center;justify-content:center;color:#141109;font-weight:800;font-size:13px}
+.compass-mark{background:url(/icons/compass.svg) center/contain no-repeat !important;border-radius:0 !important}
 .msg{display:flex}
 .msg.user{justify-content:flex-end}
 .bubble{max-width:84%;font-size:14px;line-height:1.5;padding:13px 16px;animation:fadeUp .3s ease}
@@ -146,7 +147,7 @@ button,input{font-family:inherit;color:inherit}
   .app{max-width:100%}
   .sidebar{display:flex;flex-direction:column;width:248px;flex:0 0 248px;border-right:1px solid var(--line);padding:22px 16px;gap:3px}
   .sidebar .brand{display:flex;align-items:center;gap:11px;padding:6px 8px 22px}
-  .sidebar .brand .logo{width:30px;height:30px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#f3c45a,var(--gold) 55%,var(--gold-3));box-shadow:0 0 20px -4px rgba(230,169,44,.6)}
+  .sidebar .brand .logo{width:32px;height:32px;background:url(/icons/compass.svg) center/contain no-repeat}
   .sidebar .brand .n{font-family:var(--serif);font-size:25px;color:var(--ink)}
   .sidebar .navitem{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:11px;color:var(--ink-2);cursor:pointer;font-size:14.5px;text-decoration:none}
   .sidebar .navitem.active{background:rgba(230,169,44,0.1);color:var(--gold)}

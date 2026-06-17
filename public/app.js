@@ -207,7 +207,7 @@ function spacesView(){
 function chatView(){
   const suggestions = ['Summarize my day','Draft an email','What needs me?'];
   return `<div class="chat">
-    <div class="who"><span class="a">${brand()[0]}</span><div><div style="font-size:15px;color:var(--ink);font-weight:700;font-family:var(--serif)">${esc(brand())}</div>
+    <div class="who"><span class="a compass-mark"></span><div><div style="font-size:15px;color:var(--ink);font-weight:700;font-family:var(--serif)">${esc(brand())}</div>
       <div style="font-size:11px;color:var(--sage)">Online · ${S.role==='All'?'all spaces':'scoped to '+S.role}</div></div></div>
     <div style="flex:1;display:flex;flex-direction:column;gap:12px" id="chatScroll">
       ${S.messages.length?'':`<div class="msg ai"><div class="bubble">Hey — I'm ${esc(brand())}. Ask me to plan your day, draft an email, check your calendar, or adjust your timeclock.</div></div>`}

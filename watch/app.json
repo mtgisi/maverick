@@ -16,7 +16,8 @@
   "targets": {
     "default": {
       "module": {
-        "page": { "pages": ["page/index"] }
+        "page": { "pages": ["page/index"] },
+        "app-side": { "path": "app-side/index" }
       },
       "platforms": [
         { "st": "r", "dw": 480 }

@@ -1,7 +1,7 @@
 /* Maverick service worker — caches static assets only.
    IMPORTANT: never handle navigation requests or redirect-able responses here, or Safari throws
    "Response served by service worker has redirections" (our '/' 302→/login auth redirect). */
-const CACHE = 'maverick-v3';
+const CACHE = 'maverick-v4';
 const ASSETS = ['/styles.css', '/app.js', '/manifest.webmanifest', '/icons/icon.svg'];
 
 self.addEventListener('install', e => {
@@ -19,14 +19,14 @@ self.addEventListener('fetch', e => {
   if (url.origin !== location.origin) return;
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/auth/') || url.pathname.startsWith('/connect/')) return;
 
-  // Cache-first for our own static assets only.
+  // Network-first for our own static assets (so updates land immediately); fall back to cache offline.
   e.respondWith(
-    caches.match(req).then(hit => hit || fetch(req).then(res => {
+    fetch(req).then(res => {
       if (res.ok && res.type === 'basic' && !res.redirected) {
         const copy = res.clone();
         caches.open(CACHE).then(c => c.put(req, copy));
       }
       return res;
-    }))
+    }).catch(() => caches.match(req))
   );
 });

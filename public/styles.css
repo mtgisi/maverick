@@ -126,6 +126,8 @@ button,input{font-family:inherit;color:inherit}
 /* ===== Settings drawer ===== */
 .drawer-scrim{position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:80}
 .drawer{position:fixed;top:0;right:0;bottom:0;width:min(330px,86vw);background:var(--surface);border-left:1px solid rgba(255,255,255,0.08);z-index:81;display:flex;flex-direction:column;animation:drawerIn .28s cubic-bezier(.2,.8,.2,1)}
+/* HTML [hidden] must win over the class display rules above */
+.drawer[hidden],.drawer-scrim[hidden]{display:none}
 .drawer-head{padding:calc(40px + var(--safe-top)) 22px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:13px}
 .drawer-head .a{width:50px;height:50px;border-radius:50%;background:linear-gradient(135deg,var(--gold),var(--sage));display:flex;align-items:center;justify-content:center;color:#141109;font-weight:800;font-size:17px}
 .drawer-head .n{font-size:16px;color:var(--ink);font-weight:700}

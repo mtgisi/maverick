@@ -40,8 +40,11 @@ Google Workspace (read-only; connected accounts):
   read_slides(presentationId): slide text. Use these when he references a doc/sheet/deck/file.
 - search_youtube(query): find videos (public).
 
-Tasks (charliework, if connected):
-- list_tasks(role?): list open tasks. add_task(title, role?, due?): create a task.
+Tasks (Charliework):
+- list_tasks(category?): open tasks (each returns an id=… you need for the next two). add_task(title, due_date?, category?, notes?).
+  complete_task(task_id): mark done. reschedule_task(task_id, due_date): move due date. ask_supervisor(body, task_id?): file a question.
+  To complete/reschedule by description, call list_tasks first, find the matching id, then act.
+  Category slugs (lowercase): tech, biz_comp, esports, robotics, st_croix, ultimate, personal.
 
 Timeclock (propose-only, payroll-safe):
 1. For ANY request to change/push/move a clock-in or clock-out, FIRST call get_timesheet, THEN

@@ -62,12 +62,26 @@ const TOOLS = [
       to: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' },
       account: { type: 'string', description: "Which connected account: 'personal' | 'work' | email. Defaults to first connected." },
     }, required: ['subject', 'body'] } },
-  { name: 'list_tasks', description: 'List open tasks from the charliework task manager (if connected).',
-    inputSchema: { type: 'object', properties: { role: { type: 'string' } } } },
-  { name: 'add_task', description: 'Add a task to the charliework task manager (if connected).',
+  { name: 'list_tasks', description: 'List open tasks from the Charliework task manager. Returns each task with its id (needed to complete/reschedule).',
     inputSchema: { type: 'object', properties: {
-      title: { type: 'string' }, role: { type: 'string' }, due: { type: 'string' },
+      category: { type: 'string', description: 'Filter by category slug: tech, biz_comp, esports, robotics, st_croix, ultimate, personal.' },
+      include_done: { type: 'boolean' },
+    } } },
+  { name: 'add_task', description: 'Create a task in Charliework.',
+    inputSchema: { type: 'object', properties: {
+      title: { type: 'string' },
+      due_date: { type: 'string', description: 'YYYY-MM-DD.' },
+      category: { type: 'string', description: 'Comma-separated slugs: tech, biz_comp, esports, robotics, st_croix, ultimate, personal.' },
+      notes: { type: 'string' },
+      tier: { type: 'string', enum: ['normal', 'someday'] },
+      assignee: { type: 'string', enum: ['user_a', 'user_b', 'together'] },
     }, required: ['title'] } },
+  { name: 'complete_task', description: 'Mark a Charliework task done. Get task_id from list_tasks first.',
+    inputSchema: { type: 'object', properties: { task_id: { type: 'string' } }, required: ['task_id'] } },
+  { name: 'reschedule_task', description: "Change a Charliework task's due date. Get task_id from list_tasks first.",
+    inputSchema: { type: 'object', properties: { task_id: { type: 'string' }, due_date: { type: 'string', description: 'YYYY-MM-DD.' } }, required: ['task_id', 'due_date'] } },
+  { name: 'ask_supervisor', description: 'File a question for the supervisor in Charliework (Ask Supervisor).',
+    inputSchema: { type: 'object', properties: { body: { type: 'string' }, task_id: { type: 'string' } }, required: ['body'] } },
   { name: 'list_bookmarks', description: 'List saved bookmarks (Powermark), if connected.',
     inputSchema: { type: 'object', properties: { query: { type: 'string' } } } },
   { name: 'container_status', description: 'Read-only summary of server containers (only if enabled).',
@@ -159,15 +173,34 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         return text(`Draft created in ${res.account} (id ${res.draftId}). It is NOT sent — review and send it yourself.`);
       }
       case 'list_tasks': {
-        if (!charliework.enabled()) return text('Task manager (charliework) is not connected yet.');
-        const res = await charliework.listTasks({ role: a.role });
-        const open = (res.tasks || []).filter(t => !t.done && !t.completed);
-        return text(open.length ? open.map(t => `- ${t.title || t.name}${t.due ? ` (due ${t.due})` : ''}`).join('\n') : '(no open tasks)');
+        if (!charliework.enabled()) return text('Task manager (Charliework) is not connected.');
+        const res = await charliework.listTasks({ category: a.category, includeDone: !!a.include_done });
+        const ts = res.tasks || [];
+        if (!ts.length) return text('(no open tasks)');
+        return text(ts.map(t => {
+          const flags = [t.is_overdue ? 'OVERDUE' : (t.is_due_soon ? 'due soon' : ''), t.awaiting_review ? 'needs review' : ''].filter(Boolean).join(', ');
+          return `- ${t.title}${t.due_date ? ` (due ${t.due_date})` : ''}${t.category ? ` [${t.category}]` : ''}${flags ? ` <${flags}>` : ''}  id=${t.id}`;
+        }).join('\n'));
       }
       case 'add_task': {
-        if (!charliework.enabled()) return text('Task manager (charliework) is not connected yet.');
-        await charliework.addTask({ title: a.title, role: a.role, due: a.due });
-        return text(`Added task: "${a.title}"`);
+        if (!charliework.enabled()) return text('Task manager (Charliework) is not connected.');
+        const r = await charliework.addTask({ title: a.title, due_date: a.due_date, category: a.category, notes: a.notes, tier: a.tier, assignee: a.assignee });
+        return text(`Added task: "${a.title}"${a.due_date ? ` (due ${a.due_date})` : ''}${r.task && r.task.id ? ` id=${r.task.id}` : ''}`);
+      }
+      case 'complete_task': {
+        if (!charliework.enabled()) return text('Task manager (Charliework) is not connected.');
+        const r = await charliework.completeTask(a.task_id);
+        return text(`Marked done: "${(r.task && r.task.title) || a.task_id}"`);
+      }
+      case 'reschedule_task': {
+        if (!charliework.enabled()) return text('Task manager (Charliework) is not connected.');
+        const r = await charliework.rescheduleTask(a.task_id, a.due_date);
+        return text(`Rescheduled "${(r.task && r.task.title) || a.task_id}" to ${a.due_date}.`);
+      }
+      case 'ask_supervisor': {
+        if (!charliework.enabled()) return text('Task manager (Charliework) is not connected.');
+        await charliework.askSupervisor({ body: a.body, task_id: a.task_id });
+        return text('Filed a question for the supervisor.');
       }
       case 'list_bookmarks': {
         if (!bookmarks.enabled()) return text('Bookmarks (Powermark) is not connected yet.');

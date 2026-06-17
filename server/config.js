@@ -38,7 +38,7 @@ module.exports = {
   charliework: {
     url: process.env.CHARLIEWORK_API_URL || '',
     token: process.env.CHARLIEWORK_API_TOKEN || '',
-    get enabled() { return !!this.url; },
+    get enabled() { return !!(this.url && this.token); },
   },
   dockerTool: String(process.env.ENABLE_DOCKER_TOOL || '').toLowerCase() === 'true',
   deviceToken: process.env.DEVICE_TOKEN || '',

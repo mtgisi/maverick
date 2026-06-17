@@ -72,7 +72,11 @@ async function loadTasks(){
   try {
     const d = await api('/tasks');
     S.tasksConnected = !!d.connected;
-    S.tasks = d.connected ? (d.tasks||[]).map((t,i)=>({id:t.id||i,title:t.title||t.name,role:t.role||'Personal',due:t.due||'',done:!!(t.done||t.completed)})) : null;
+    const CAT2ROLE={tech:'Tech',biz_comp:'Teaching',esports:'Esports',robotics:'Robotics',st_croix:'Field Sci',ultimate:'Ultimate',personal:'Personal'};
+    S.tasks = d.connected ? (d.tasks||[]).map((t,i)=>{
+      const cat=String(t.category||'').split(',')[0].trim();
+      return {id:t.id||i,title:t.title||t.name,role:CAT2ROLE[cat]||'Personal',due:t.due_date||t.due||'',done:t.status?t.status==='done':!!(t.done||t.completed)};
+    }) : null;
   } catch(_){ S.tasksConnected=false; S.tasks=null; }
 }
 const events = () => S.events || DEMO_EVENTS;
@@ -306,7 +310,7 @@ document.addEventListener('click', e=>{
   if(t.dataset.role){ S.role=t.dataset.role; render(); return; }
   if(t.dataset.detail){ S.detail=t.dataset.detail; render(); return; }
   if(t.dataset.space){ S.role=t.dataset.space; S.tab='home'; S.detail=null; S.drawer=false; render(); return; }
-  if(t.dataset.task){ const id=t.dataset.task; const arr=tasks(); const tk=arr.find(x=>String(x.id)===id); if(tk) tk.done=!tk.done; render(); return; }
+  if(t.dataset.task){ const id=t.dataset.task; const arr=tasks(); const tk=arr.find(x=>String(x.id)===id); if(tk){ tk.done=!tk.done; if(S.tasksConnected) api('/tasks/'+id,{method:'PATCH',body:JSON.stringify({status:tk.done?'done':'open'})}).catch(()=>{}); } render(); return; }
   if(t.dataset.confirm){ confirmPending(Number(t.dataset.confirm)); return; }
   if(t.dataset.cancel){ cancelPending(Number(t.dataset.cancel)); return; }
   if(t.dataset.suggest){ send(t.dataset.suggest); return; }

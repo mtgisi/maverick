@@ -8,3 +8,6 @@ npm-debug.log*
 # local design source / scratch (not part of the app)
 _design/
 *.zip
+
+# watch build config holds the device token — never commit
+watch/config.js

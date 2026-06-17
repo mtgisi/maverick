@@ -20,6 +20,11 @@ module.exports = {
   googleApiKey: process.env.GOOGLE_API_KEY || '',
   get keyApisEnabled() { return !!this.googleApiKey; },
 
+  // Calendar summaries (substring, case-insensitive) to always treat as "work"/resource calendars,
+  // regardless of ownership. Comma-separated in WORK_CALENDARS. Kept in .env (out of the repo).
+  workCalendars: (process.env.WORK_CALENDARS || '')
+    .split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
+
   timeclock: {
     url: process.env.TIMECLOCK_URL || '',
     token: process.env.AGENT_API_TOKEN || '',

@@ -1,7 +1,7 @@
 // Thin googleapis wrappers: unified calendar read + Gmail draft creation (draft-only by design).
 const { google } = require('googleapis');
 const oauth = require('./oauth');
-const { TZ } = require('../config');
+const { TZ, workCalendars } = require('../config');
 
 function dayBounds(dateStr) {
   // dateStr = 'YYYY-MM-DD' in TZ, or undefined for today. Returns ISO timeMin/timeMax for that local day.
@@ -20,6 +20,9 @@ function dayBounds(dateStr) {
 //   resource = school/org resource calendars (rooms, equipment) — Google resource ids, or named like one
 //   shared   = calendars shared/subscribed to you that you don't own (reader/writer)
 function calKind(c) {
+  const sum = (c.summary || '').toLowerCase();
+  // Explicit work-calendar overrides win even over ownership (e.g. "Office ins and outs").
+  if ((workCalendars || []).some(w => sum.includes(w))) return 'resource';
   if (c.primary || c.accessRole === 'owner') return 'owned';
   const id = c.id || '';
   if (/@resource\.calendar\.google\.com$/i.test(id) || /\b(resource|room|lab|cart|library|projector|chromebook)\b/i.test(c.summary || '')) return 'resource';

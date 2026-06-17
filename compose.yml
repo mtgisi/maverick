@@ -1,0 +1,23 @@
+services:
+  maverick:
+    build: .
+    container_name: maverick
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      TZ: America/Chicago
+    volumes:
+      - ./claude-config:/home/node/.claude   # Claude Code subscription auth (shared OAuth token)
+      - ./data:/app/data                     # maverick sqlite (memories, sessions, google tokens, etc.)
+      # To enable the read-only container-status tool, set ENABLE_DOCKER_TOOL=true in .env
+      # and uncomment the next line (mounts docker socket read-only):
+      # - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
+    name: proxy

@@ -1,0 +1,333 @@
+/* Maverick — Aureo SPA. Vanilla JS, no build step. Mobile-first, responsive desktop.
+   Renders the design faithfully; pulls real data where connected, demo data otherwise. */
+'use strict';
+
+const ROLE_COLORS = {
+  'All':'#e6a92c','Teaching':'#e6a92c','Tech':'#9ca980','Freelance':'#c2906a',
+  'Field Sci':'#6fa195','Ultimate':'#7e93b0','Esports':'#a98aa0','Robotics':'#cf9f5a',
+  'Media':'#8f9bb0','Personal':'#a3a392'
+};
+const ROLE_ORDER = ['All','Teaching','Tech','Freelance','Field Sci','Ultimate','Esports','Robotics','Media','Personal'];
+
+const ICONS = {
+  home:'<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" stroke-linejoin="round"/>',
+  calendar:'<rect x="3.5" y="5" width="17" height="16" rx="2.5"/><line x1="3.5" y1="9.5" x2="20.5" y2="9.5"/><line x1="8" y1="3" x2="8" y2="6"/><line x1="16" y1="3" x2="16" y2="6"/>',
+  tasks:'<polyline points="4,12 7,15 12,8" stroke-linecap="round" stroke-linejoin="round"/><line x1="14" y1="7" x2="20" y2="7"/><line x1="14" y1="13" x2="20" y2="13"/><line x1="4" y1="19" x2="20" y2="19"/>',
+  spaces:'<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+  mic:'<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0" stroke-linecap="round"/><line x1="12" y1="17" x2="12" y2="21"/>',
+};
+const svg = (name, color, w=22) => `<svg width="${w}" height="${w}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="1.8">${ICONS[name]}</svg>`;
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+const NAV = [['home','Home'],['calendar','Calendar'],['tasks','Tasks'],['spaces','Spaces']];
+
+// Demo fallbacks (shown until a real data source is connected; tagged "demo" in the UI).
+const DEMO_TASKS = [
+  {id:1,title:'Pack tide charts & spare GoPro',role:'Field Sci',due:'Due by 12:30 PM',done:false},
+  {id:2,title:'Flash drive-base firmware',role:'Robotics',due:'Due before 2:00 standup',done:false},
+  {id:3,title:'Send invoice — Reef Co.',role:'Freelance',due:'Due today',done:false},
+  {id:4,title:'Grade quiz 4 — Bio',role:'Teaching',due:'Tomorrow',done:false},
+  {id:6,title:'Print scouting sheets ×6',role:'Robotics',due:'Tomorrow',done:false},
+];
+const DEMO_EVENTS = [
+  {time:'8:00',title:'Bio — Period 1',sub:'Room 204 · Teaching',role:'Teaching'},
+  {time:'1:10',title:'St. Croix tide survey',sub:'Reef site B · Field Sci',role:'Field Sci'},
+  {time:'2:00',title:'Robotics standup',sub:'Lab 3 · Robotics',role:'Robotics'},
+  {time:'5:30',title:'Ultimate scrimmage',sub:'Turf field · Ultimate',role:'Ultimate'},
+];
+
+const S = {
+  cfg:null, tab:'home', role:'All', detail:null, whyOpen:false,
+  listening:false, thinking:false, chatInput:'',
+  messages:[], pending:[], spaces:[],
+  events:null, eventsConnected:false, tasks:null, tasksConnected:false,
+  drawer:false, conv:'web',
+};
+
+const api = async (path, opts) => {
+  const r = await fetch('/api'+path, Object.assign({headers:{'Content-Type':'application/json'}}, opts));
+  if (r.status === 401) { location.href='/login'; throw new Error('unauth'); }
+  return r.json();
+};
+
+/* ---------- helpers ---------- */
+const rc = r => ROLE_COLORS[r] || '#e6a92c';
+const inRole = r => S.role==='All' || r===S.role;
+const greeting = () => { const h=new Date().getHours(); return h<12?'Good morning':h<18?'Good afternoon':'Good evening'; };
+const todayStr = () => new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
+const initials = () => (S.cfg && S.cfg.user.initials) || 'M';
+const brand = () => (S.cfg && S.cfg.brand) || 'Maverick';
+
+/* ---------- data loads ---------- */
+async function loadConfig(){ S.cfg = await api('/config'); }
+async function loadSpaces(){ try { S.spaces = await api('/spaces'); } catch(_){ S.spaces=[]; } }
+async function loadEvents(){
+  try {
+    const d = await api('/calendar');
+    S.eventsConnected = !!d.connected;
+    S.events = d.connected ? (d.events||[]).filter(e=>!e.error).map(e=>({time:e.time||'all day',title:e.title,sub:(e.location||e.account||''),role:S.role==='All'?'Personal':S.role})) : null;
+  } catch(_){ S.eventsConnected=false; S.events=null; }
+}
+async function loadTasks(){
+  try {
+    const d = await api('/tasks');
+    S.tasksConnected = !!d.connected;
+    S.tasks = d.connected ? (d.tasks||[]).map((t,i)=>({id:t.id||i,title:t.title||t.name,role:t.role||'Personal',due:t.due||'',done:!!(t.done||t.completed)})) : null;
+  } catch(_){ S.tasksConnected=false; S.tasks=null; }
+}
+const events = () => S.events || DEMO_EVENTS;
+const tasks = () => S.tasks || DEMO_TASKS;
+const isDemoTasks = () => !S.tasksConnected;
+const isDemoEvents = () => !S.eventsConnected;
+
+/* ---------- chat ---------- */
+async function send(text){
+  text = (text||S.chatInput||'').trim(); if(!text) return;
+  S.messages.push({from:'user',text}); S.chatInput=''; S.tab='chat'; S.detail=null; S.listening=false; S.thinking=true;
+  render();
+  try {
+    const d = await api('/chat',{method:'POST',body:JSON.stringify({conversation_id:S.conv,message:text})});
+    S.messages.push({from:'ai',text:d.reply||'(no reply)'});
+    S.pending = d.pending||[];
+  } catch(e){ S.messages.push({from:'ai',text:'Something went wrong reaching the assistant.'}); }
+  S.thinking=false; render(); scrollChat();
+}
+async function confirmPending(id){ await api('/timesheet/confirm',{method:'POST',body:JSON.stringify({id})}); S.pending=S.pending.filter(p=>p.id!==id); S.messages.push({from:'ai',text:'Done — applied and logged.'}); render(); }
+async function cancelPending(id){ await api('/timesheet/cancel',{method:'POST',body:JSON.stringify({id})}); S.pending=S.pending.filter(p=>p.id!==id); render(); }
+
+/* ---------- speech (Web Speech API) ---------- */
+let recog=null;
+function toggleMic(){
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SR){ alert('Voice dictation needs Chrome/Edge or Safari.'); return; }
+  if(S.listening){ recog && recog.stop(); S.listening=false; render(); return; }
+  recog = new SR(); recog.lang='en-US'; recog.interimResults=true; recog.continuous=false;
+  S.listening=true; S.chatInput=''; render();
+  recog.onresult = e => { let t=''; for(const r of e.results) t+=r[0].transcript; S.chatInput=t; const inp=document.getElementById('chatInput'); if(inp) inp.value=t; };
+  recog.onerror = () => { S.listening=false; render(); };
+  recog.onend = () => { S.listening=false; render(); if((S.chatInput||'').trim()) send(); };
+  recog.start();
+}
+
+/* ---------- render ---------- */
+function chips(){
+  return `<div class="chips">${ROLE_ORDER.map(k=>{
+    const active=S.role===k;
+    return `<button class="chip${active?' active':''}" style="${active?`background:${rc(k)}`:''}" data-role="${k}">${k}</button>`;
+  }).join('')}</div>`;
+}
+
+function homeView(){
+  const ev = events().filter(e=>inRole(e.role));
+  const next = ev[0];
+  const due = tasks().filter(t=>!t.done && inRole(t.role)).length;
+  const leadTitle = next ? `${next.title}` : 'Nothing urgent right now';
+  const leadSub = next ? `${next.time} · ${next.sub}` : 'Your day is clear. Ask me to plan something.';
+  return `
+  ${headerHTML()}
+  <div class="lead">
+    <div class="now"><span class="dot"></span><span class="t">Right now${S.role!=='All'?' · '+S.role:''}</span></div>
+    <h2>${esc(leadTitle)}</h2>
+    <p>${esc(leadSub)}</p>
+    ${S.whyOpen?`<div class="why">
+      <div class="row"><b>◆</b><span>Surfaced from your calendar and open tasks for this space.</span></div>
+      <div class="row"><b>◆</b><span>${due} task${due===1?'':'s'} due — I can reprioritize on request.</span></div>
+    </div>`:''}
+    <div class="actions">
+      <button class="btn" data-act="chat-plan">Start prep</button>
+      <button class="btn ghost" data-act="why">${S.whyOpen?'Hide reasoning':'Why this?'}</button>
+    </div>
+  </div>
+  ${chips()}
+  <div class="grid">
+    <div class="card span2" data-go="calendar" style="display:flex;justify-content:space-between;align-items:center">
+      <div><div class="k">Next up${next?' · '+esc(next.time):''}</div>
+        <div style="font-size:15.5px;color:var(--ink);font-weight:600">${esc(next?next.title:'No events')}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px">${esc(next?next.sub:'')}${isDemoEvents()?'<span class="demo-tag">demo</span>':''}</div></div>
+      <span style="width:30px;height:30px;border-radius:50%;border:1px solid rgba(207,159,90,.4);color:#cf9f5a;display:flex;align-items:center;justify-content:center">→</span>
+    </div>
+    <div class="card" data-go="tasks"><div class="k">Tasks</div>
+      <div style="display:flex;align-items:baseline;gap:6px"><span class="bignum">${due}</span><span style="font-size:12px;color:var(--muted)">due${isDemoTasks()?' · demo':''}</span></div></div>
+    <div class="card" data-detail="notifications"><div class="k">Notifications</div>
+      <div style="display:flex;align-items:baseline;gap:6px"><span class="bignum" style="color:var(--ink)">${S.pending.length}</span><span style="font-size:12px;color:#cf9f5a">${S.pending.length?'need you':'all clear'}</span></div></div>
+    <div class="card" data-detail="sleep"><div class="k">Sleep <span class="demo-tag">demo</span></div>
+      <div class="mono" style="font-size:18px;color:var(--ink)">7h 12m</div><div style="font-size:11.5px;color:var(--sage);margin-top:3px">+24m vs avg</div></div>
+    <div class="card" data-detail="nutrition"><div class="k">Nutrition <span class="demo-tag">demo</span></div>
+      <div class="mono" style="font-size:14px;color:var(--ink)">1,240<span style="color:var(--faint);font-size:11px"> / 2,100</span></div>
+      <div class="bar"><span style="width:59%"></span></div></div>
+    <div class="card" data-detail="finance"><div class="k">Finance · week <span class="demo-tag">demo</span></div>
+      <div class="mono" style="font-size:18px;color:var(--sage)">$214</div><div style="font-size:11.5px;color:var(--muted);margin-top:3px">left to spend</div></div>
+    <div class="card span2" data-go="spaces" style="background:linear-gradient(120deg,rgba(156,169,128,.12),rgba(255,255,255,.03));border-color:rgba(156,169,128,.22);display:flex;justify-content:space-between;align-items:center">
+      <div><div class="k" style="color:var(--sage)">Spaces</div><div style="font-size:15.5px;color:var(--ink);font-weight:600">${(S.spaces.length||9)} contexts · scope your day</div></div>
+      <span class="mono" style="font-size:24px;color:var(--sage)">${S.spaces.length||9}</span></div>
+  </div>`;
+}
+
+function headerHTML(){
+  return `<div class="head">
+    <div><div class="date">${esc(todayStr())}</div><div class="greet">${greeting()}${S.cfg&&S.cfg.user.name?', '+esc(S.cfg.user.name.split(' ')[0]):''}</div></div>
+    <div class="right"><div><div class="temp">72°</div><div class="cond">Sunny</div></div>
+      <button class="avatar" data-act="settings">${esc(initials())}</button></div>
+  </div>`;
+}
+
+function calendarView(){
+  const ev = events().filter(e=>inRole(e.role));
+  return `<div class="dhead" style="justify-content:space-between"><div><div class="sub">Today</div><div class="ttl">${esc(todayStr())}</div></div>
+    <div style="font-size:12px;color:var(--muted)">${S.role==='All'?'All spaces':S.role+' space'}${isDemoEvents()?' · demo':''}</div></div>
+    ${!S.eventsConnected?`<div class="pending" style="margin-bottom:14px"><div class="s">Connect a Google account to see your real calendar.</div><div class="a"><a class="btn" href="/connect/google?account=personal">Connect Google</a></div></div>`:''}
+    <div class="agenda">${ev.map(e=>`<div class="ev"><div class="time">${esc(e.time)}</div>
+      <div class="body" style="border-left-color:${rc(e.role)}"><div class="t">${esc(e.title)}</div><div class="s">${esc(e.sub)}</div></div></div>`).join('')||'<div style="color:var(--muted);padding:20px">No events.</div>'}</div>`;
+}
+
+function tasksView(){
+  const ts = tasks().filter(t=>inRole(t.role));
+  return `<div class="dhead"><div><div class="sub">${S.role==='All'?'All spaces':S.role+' space'}${isDemoTasks()?' · demo':''}</div><div class="ttl">Tasks</div></div></div>
+    ${chips()}
+    ${!S.tasksConnected?`<div class="pending" style="margin:8px 0 14px"><div class="s">Showing sample tasks. Connect charliework to manage real ones.</div></div>`:''}
+    <div style="display:flex;flex-direction:column;gap:9px">${ts.map(t=>`
+      <div class="task${t.done?' done':''}" data-task="${t.id}">
+        <span class="box${t.done?' done':''}">${t.done?'✓':''}</span>
+        <div style="flex:1"><div class="t">${esc(t.title)}</div>${t.due?`<div class="due">${esc(t.due)}</div>`:''}</div>
+        <span class="role-tag" style="color:${rc(t.role)};border-color:${rc(t.role)}">${esc(t.role)}</span>
+      </div>`).join('')}</div>`;
+}
+
+function spacesView(){
+  const list = (S.spaces.length?S.spaces:ROLE_ORDER.filter(k=>k!=='All').map(k=>({key:k,label:k,color:rc(k),memories:0,notes:0})));
+  return `<div class="dhead"><div><div class="sub">Your roles & contexts</div><div class="ttl">Spaces</div></div></div>
+    <p style="font-size:13px;color:var(--muted);margin:-8px 2px 14px;line-height:1.5">Each space pulls its own tasks, events, notes and notifications into the shared modules.</p>
+    <div class="grid" style="grid-template-columns:1fr 1fr">${list.map(s=>`
+      <div class="space" data-space="${s.key}" style="border-top-color:${s.color}">
+        <div class="sw" style="background:${s.color}"></div>
+        <div class="l">${esc(s.label)}</div>
+        <div class="m">${s.memories||0} memories · ${s.notes||0} notes</div></div>`).join('')}</div>`;
+}
+
+function chatView(){
+  const suggestions = ['Summarize my day','Draft an email','What needs me?'];
+  return `<div class="chat">
+    <div class="who"><span class="a">${brand()[0]}</span><div><div style="font-size:15px;color:var(--ink);font-weight:700;font-family:var(--serif)">${esc(brand())}</div>
+      <div style="font-size:11px;color:var(--sage)">Online · ${S.role==='All'?'all spaces':'scoped to '+S.role}</div></div></div>
+    <div style="flex:1;display:flex;flex-direction:column;gap:12px" id="chatScroll">
+      ${S.messages.length?'':`<div class="msg ai"><div class="bubble">Hey — I'm ${esc(brand())}. Ask me to plan your day, draft an email, check your calendar, or adjust your timeclock.</div></div>`}
+      ${S.messages.map(m=>`<div class="msg ${m.from==='user'?'user':'ai'}"><div class="bubble">${esc(m.text)}</div></div>`).join('')}
+      ${S.thinking?`<div class="typing"><span></span><span></span><span></span></div>`:''}
+      ${S.pending.map(p=>`<div class="pending"><div class="s">${esc(p.summary)}</div><div class="a"><button class="btn" data-confirm="${p.id}">Confirm</button><button class="btn ghost" data-cancel="${p.id}">Cancel</button></div></div>`).join('')}
+    </div>
+    <div class="suggest">${suggestions.map(s=>`<span data-suggest="${esc(s)}">${esc(s)}</span>`).join('')}</div>
+  </div>`;
+}
+
+/* demo detail views (Aureo design, placeholder data) */
+function detailView(){
+  const back = `<div class="dhead"><button class="back" data-act="back">←</button><div><div class="sub">Demo data</div><div class="ttl">${({nutrition:'Nutrition',sleep:'Sleep',finance:'Finance',workout:'Training',notes:'Notes',notifications:'Notifications'})[S.detail]||''}</div></div></div>`;
+  if(S.detail==='notifications'){
+    return back + (S.pending.length?`<div class="section-label" style="color:#cf9f5a">Needs you · ${S.pending.length}</div>
+      <div style="display:flex;flex-direction:column;gap:9px">${S.pending.map(p=>`<div class="pending"><div class="s">${esc(p.summary)}</div><div class="a"><button class="btn" data-confirm="${p.id}">Confirm</button><button class="btn ghost" data-cancel="${p.id}">Cancel</button></div></div>`).join('')}</div>`
+      :`<div style="color:var(--muted);padding:24px 4px">No notifications need you. Pending assistant proposals show up here.</div>`);
+  }
+  if(S.detail==='nutrition') return back + `<div class="lead" style="display:flex;justify-content:space-between;align-items:center;border-color:rgba(230,169,44,.22)"><div><div class="mono" style="font-size:34px;color:var(--gold)">1,240</div><div style="font-size:12px;color:var(--muted)">of 2,100 kcal</div></div><div style="text-align:right"><div class="mono" style="font-size:22px;color:var(--ink)">860</div><div style="font-size:12px;color:var(--sage)">remaining</div></div></div><div class="bar" style="height:8px;margin-top:14px"><span style="width:59%"></span></div>${macros()}`;
+  if(S.detail==='sleep') return back + `<div style="display:flex;gap:11px"><div class="card" style="flex:1;cursor:default"><div class="mono" style="font-size:26px;color:var(--ink)">7h 12m</div><div style="font-size:12px;color:var(--sage);margin-top:5px">+24m vs avg</div></div><div class="card" style="flex:1;cursor:default;background:linear-gradient(155deg,#222a18,#1a1810);border-color:rgba(156,169,128,.25)"><div class="mono" style="font-size:26px;color:var(--sage)">84</div><div style="font-size:12px;color:var(--muted);margin-top:5px">sleep score</div></div></div><div class="section-label">Last 7 nights</div>${bars7()}`;
+  if(S.detail==='finance') return back + `<div class="lead" style="background:linear-gradient(155deg,#222a18,#1a1810);border-color:rgba(156,169,128,.25)"><div style="display:flex;justify-content:space-between;align-items:baseline"><div><div class="mono" style="font-size:30px;color:var(--sage)">$214</div><div style="font-size:12px;color:var(--muted);margin-top:4px">left of $600 weekly budget</div></div><div class="mono" style="font-size:14px;color:var(--faint)">$386 spent</div></div><div class="bar" style="height:8px;margin-top:14px"><span style="width:64%;background:var(--sage)"></span></div></div>`;
+  if(S.detail==='workout') return back + `<div class="card" style="cursor:default"><div class="k">Up next · 5:30 PM</div><div style="font-size:17px;color:var(--ink);font-weight:700">Ultimate scrimmage</div><div style="font-size:12px;color:var(--muted);margin-top:2px">Turf field · ~90 min</div></div>`;
+  return back;
+}
+const macros=()=>`<div class="section-label">Macros</div>${[['Protein','78 / 120g',65,'var(--gold)'],['Carbs','130 / 210g',62,'var(--sage)'],['Fat','41 / 70g',58,'#cf9f5a']].map(([n,v,w,c])=>`<div style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;font-size:13px;color:var(--ink-2);margin-bottom:6px"><span>${n}</span><span class="mono" style="color:var(--muted)">${v}</span></div><div class="bar" style="height:6px;margin:0"><span style="width:${w}%;background:${c}"></span></div></div>`).join('')}`;
+const bars7=()=>`<div style="display:flex;align-items:flex-end;gap:9px;height:110px">${[64,80,55,72,68,60,78].map((h,i)=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px"><span style="width:100%;height:${h}%;background:${i===6?'var(--gold)':'rgba(156,169,128,.5)'};border-radius:5px"></span><span style="font-size:10px;color:${i===6?'var(--gold)':'var(--faint)'}">${'WTFSSMT'[i]}</span></div>`).join('')}</div>`;
+
+function render(){
+  // sidebar (desktop)
+  document.getElementById('sidebar').innerHTML = `
+    <div class="brand"><span class="logo"></span><span class="n">${esc(brand())}</span></div>
+    ${NAV.map(([k,l])=>`<a class="navitem${S.tab===k?' active':''}" data-go="${k}">${svg(k,S.tab===k?'#e6a92c':'#cfc6b4',19)}<span>${l}</span></a>`).join('')}
+    <div class="spaces-h">Spaces</div>
+    <div class="splist">${(S.spaces.length?S.spaces:ROLE_ORDER.filter(k=>k!=='All').map(k=>({key:k,label:k,color:rc(k),memories:0}))).map(s=>`<div class="si" data-space="${s.key}"><span class="sw" style="background:${s.color}"></span><span>${esc(s.label)}</span><span class="c">${s.memories||0}</span></div>`).join('')}</div>
+    <div class="me" data-act="settings"><span class="a">${esc(initials())}</span><div style="flex:1"><div style="font-size:13.5px;color:var(--ink);font-weight:600">${esc((S.cfg&&S.cfg.user.name)||'Account')}</div><div style="font-size:11px;color:var(--faint)">${(S.spaces.length||9)} spaces</div></div></div>`;
+
+  // topbar (desktop shows title; mobile shows nothing here — header is in home view)
+  const titles={home:'Dashboard',calendar:'Calendar',tasks:'Tasks',spaces:'Spaces',chat:brand()};
+  document.getElementById('topbar').innerHTML = `<div class="desktop-only"><div class="ttl">${esc(S.detail?titles[S.detail]||'Detail':titles[S.tab]||'')}</div><div class="sub">${esc(todayStr())} · ${S.role==='All'?'All spaces':S.role+' space'}</div></div>
+    <div class="desktop-only" style="display:flex;align-items:center;gap:16px"><div style="text-align:right"><div class="temp mono" style="font-size:16px;color:var(--gold)">72°</div><div class="cond">Sunny</div></div></div>`;
+
+  // main view
+  let html;
+  if(S.detail) html=detailView();
+  else if(S.tab==='home') html=homeView();
+  else if(S.tab==='calendar') html=calendarView();
+  else if(S.tab==='tasks') html=tasksView();
+  else if(S.tab==='spaces') html=spacesView();
+  else if(S.tab==='chat') html=chatView();
+  document.getElementById('view').innerHTML=html;
+
+  // chrome (bottom nav + omnipresent chat bar)
+  document.getElementById('chrome').innerHTML = `
+    <div class="nav">${NAV.map(([k,l])=>`<a class="${S.tab===k&&!S.detail?'active':''}" data-go="${k}">${svg(k,S.tab===k&&!S.detail?'#e6a92c':'#6f6a5e')}<span>${l}</span></a>`).join('')}</div>
+    <div class="bar-chat">
+      <button class="mic${S.listening?' live':''}" data-act="mic">${svg('mic',S.listening?'#141109':'#cfc6b4',18)}</button>
+      <input id="chatInput" placeholder="${S.listening?'Listening…':'Ask or tell '+brand()+' anything…'}" value="${esc(S.chatInput)}">
+      <button class="send" data-act="send">↑</button>
+    </div>`;
+
+  // drawer
+  const dr=document.getElementById('drawer'), sc=document.getElementById('scrim');
+  if(S.drawer){ dr.hidden=false; sc.hidden=false; dr.innerHTML=drawerHTML(); } else { dr.hidden=true; sc.hidden=true; }
+}
+
+function drawerHTML(){
+  const accts=(S.cfg&&S.cfg.googleAccounts)||[];
+  const feat=(S.cfg&&S.cfg.features)||{};
+  const acctRows = accts.length?accts.map(a=>`<div class="drawer-item"><span class="sw" style="background:var(--sage)"></span><span class="l">${esc(a.email)}</span><span class="r">${esc(a.label||'')}</span></div>`).join(''):`<div class="drawer-item" style="cursor:default"><span class="sw" style="background:var(--dim)"></span><span class="l" style="color:var(--muted)">None connected</span></div>`;
+  return `<div class="drawer-head"><span class="a">${esc(initials())}</span><div style="flex:1"><div class="n">${esc((S.cfg&&S.cfg.user.name)||'Account')}</div><div class="e">${esc((S.cfg&&S.cfg.user.email)||'')}</div></div><span data-act="settings" style="color:var(--muted);font-size:20px;cursor:pointer">✕</span></div>
+  <div class="drawer-body">
+    <div class="g">Connected Google accounts</div>
+    ${acctRows}
+    <a class="drawer-item" href="/connect/google?account=personal"><span class="sw" style="background:var(--gold)"></span><span class="l">Connect personal Gmail / Calendar</span><span class="r">→</span></a>
+    <a class="drawer-item" href="/connect/google?account=work"><span class="sw" style="background:#6fa195"></span><span class="l">Connect work Gmail / Calendar</span><span class="r">→</span></a>
+    <div class="g">Integrations</div>
+    ${[['Timeclock',feat.timeclock],['Tasks (charliework)',feat.tasks],['Bookmarks',feat.bookmarks],['Containers',feat.containers]].map(([n,on])=>`<div class="drawer-item" style="cursor:default"><span class="sw" style="background:${on?'var(--sage)':'var(--dim)'}"></span><span class="l">${n}</span><span class="r">${on?'On':'Off'}</span></div>`).join('')}
+    <div class="g">App</div>
+    <div class="drawer-item" data-act="install"><span class="sw" style="background:var(--gold)"></span><span class="l">Add to Home Screen</span><span class="r"></span></div>
+    <div class="drawer-item" style="cursor:default"><span class="sw" style="background:var(--dim)"></span><span class="l">About ${esc(brand())}</span><span class="r">v0.1</span></div>
+    <a class="signout" href="/auth/logout">Sign out</a>
+  </div>`;
+}
+
+function scrollChat(){ const el=document.getElementById('chatScroll'); if(el) el.scrollIntoView(false); const v=document.getElementById('view'); if(v) v.scrollTop=v.scrollHeight; }
+
+/* ---------- events (delegated) ---------- */
+let deferredPrompt=null;
+window.addEventListener('beforeinstallprompt', e=>{ e.preventDefault(); deferredPrompt=e; });
+
+document.addEventListener('click', e=>{
+  const t=e.target.closest('[data-go],[data-role],[data-act],[data-detail],[data-task],[data-space],[data-confirm],[data-cancel],[data-suggest]');
+  if(!t) return;
+  if(t.dataset.go){ S.tab=t.dataset.go; S.detail=null; render(); return; }
+  if(t.dataset.role){ S.role=t.dataset.role; render(); return; }
+  if(t.dataset.detail){ S.detail=t.dataset.detail; render(); return; }
+  if(t.dataset.space){ S.role=t.dataset.space; S.tab='home'; S.detail=null; S.drawer=false; render(); return; }
+  if(t.dataset.task){ const id=t.dataset.task; const arr=tasks(); const tk=arr.find(x=>String(x.id)===id); if(tk) tk.done=!tk.done; render(); return; }
+  if(t.dataset.confirm){ confirmPending(Number(t.dataset.confirm)); return; }
+  if(t.dataset.cancel){ cancelPending(Number(t.dataset.cancel)); return; }
+  if(t.dataset.suggest){ send(t.dataset.suggest); return; }
+  const a=t.dataset.act;
+  if(a==='settings'){ S.drawer=!S.drawer; render(); }
+  else if(a==='back'){ S.detail=null; render(); }
+  else if(a==='why'){ S.whyOpen=!S.whyOpen; render(); }
+  else if(a==='mic'){ toggleMic(); }
+  else if(a==='send'){ const inp=document.getElementById('chatInput'); S.chatInput=inp?inp.value:''; send(); }
+  else if(a==='chat-plan'){ send('Plan my day and tell me what to start with.'); }
+  else if(a==='install'){ if(deferredPrompt){ deferredPrompt.prompt(); deferredPrompt=null; } else alert('Use your browser menu → Add to Home Screen.'); }
+});
+document.addEventListener('input', e=>{ if(e.target.id==='chatInput') S.chatInput=e.target.value; });
+document.addEventListener('keydown', e=>{ if(e.target.id==='chatInput' && e.key==='Enter'){ S.chatInput=e.target.value; send(); } });
+document.getElementById('scrim').addEventListener('click', ()=>{ S.drawer=false; render(); });
+
+/* ---------- boot ---------- */
+(async ()=>{
+  try { await loadConfig(); document.title=brand(); } catch(_){}
+  render();
+  await Promise.all([loadSpaces(), loadEvents(), loadTasks()]);
+  render();
+  if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
+})();

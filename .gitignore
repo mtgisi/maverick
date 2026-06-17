@@ -1,0 +1,10 @@
+node_modules/
+/data/
+/claude-config/
+.env
+.env.local
+npm-debug.log*
+
+# local design source / scratch (not part of the app)
+_design/
+*.zip

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "maverick": {
+      "command": "node",
+      "args": ["/app/server/mcp-server.js"]
+    }
+  }
+}

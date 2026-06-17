@@ -150,10 +150,13 @@ Page(
         this._rec.setFormat(media.codec.OPUS, { target_file: REC_PATH });
         this._rec.start();
         this.state.recording = true; this.state.err = ''; this.render();
+        // auto-stop after 12s so the clip (and upload) stays small
+        this._autostop = setTimeout(() => { if (this.state.recording) this.stopRec(); }, 12000);
       } catch (e) { this.showErr('record start: ' + (e && e.message || e)); }
     },
 
     stopRec() {
+      if (this._autostop) { clearTimeout(this._autostop); this._autostop = null; }
       try { this._rec && this._rec.stop(); } catch (e) {}
       try { this._rec && this._rec.release && this._rec.release(); } catch (e) {}
       this.state.recording = false; this.state.busy = true; this.state.transcript = ''; this.state.reply = ''; this.render();

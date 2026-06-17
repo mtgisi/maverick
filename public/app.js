@@ -19,6 +19,27 @@ const ICONS = {
 const svg = (name, color, w=22) => `<svg width="${w}" height="${w}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="1.8">${ICONS[name]}</svg>`;
 const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
+// Minimal, safe Markdown -> HTML (escape first, then a small subset). Used for assistant messages.
+function md(s){
+  let h = esc(s);
+  h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
+  h = h.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  h = h.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  h = h.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  h = h.replace(/^\s*#{1,6}\s*(.+)$/gm, '<div class="mdh">$1</div>');
+  const lines = h.split('\n'); let out = '', ul = false, ol = false;
+  const close = () => { if(ul){out+='</ul>';ul=false;} if(ol){out+='</ol>';ol=false;} };
+  for (const ln of lines) {
+    let m;
+    if ((m = ln.match(/^\s*[-*]\s+(.+)$/))) { if(!ul){close();out+='<ul>';ul=true;} out+='<li>'+m[1]+'</li>'; }
+    else if ((m = ln.match(/^\s*\d+\.\s+(.+)$/))) { if(!ol){close();out+='<ol>';ol=true;} out+='<li>'+m[1]+'</li>'; }
+    else if (/^<div class="mdh">/.test(ln)) { close(); out += ln; }
+    else { close(); out += ln.trim() === '' ? '<br>' : ln + '<br>'; }
+  }
+  close();
+  return out;
+}
+
 const NAV = [['home','Home'],['calendar','Calendar'],['tasks','Tasks'],['spaces','Spaces']];
 
 // Demo fallbacks (shown until a real data source is connected; tagged "demo" in the UI).
@@ -215,7 +236,7 @@ function chatView(){
       <div style="font-size:11px;color:var(--sage)">Online · ${S.role==='All'?'all spaces':'scoped to '+S.role}</div></div></div>
     <div style="flex:1;display:flex;flex-direction:column;gap:12px" id="chatScroll">
       ${S.messages.length?'':`<div class="msg ai"><div class="bubble">Hey — I'm ${esc(brand())}. Ask me to plan your day, draft an email, check your calendar, or adjust your timeclock.</div></div>`}
-      ${S.messages.map(m=>`<div class="msg ${m.from==='user'?'user':'ai'}"><div class="bubble">${esc(m.text)}</div></div>`).join('')}
+      ${S.messages.map(m=>`<div class="msg ${m.from==='user'?'user':'ai'}"><div class="bubble">${m.from==='user'?esc(m.text):md(m.text)}</div></div>`).join('')}
       ${S.thinking?`<div class="typing"><span></span><span></span><span></span></div>`:''}
       ${S.pending.map(p=>`<div class="pending"><div class="s">${esc(p.summary)}</div><div class="a"><button class="btn" data-confirm="${p.id}">Confirm</button><button class="btn ghost" data-cancel="${p.id}">Cancel</button></div></div>`).join('')}
     </div>

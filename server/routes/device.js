@@ -25,15 +25,23 @@ router.post('/chat', async (req, res) => {
   }
 });
 
-// POST /api/device/transcribe  (raw audio bytes in body) -> { transcript, reply }
+// POST /api/device/transcribe -> { transcript, reply }
+// Accepts the audio either as raw bytes (Content-Type: application/octet-stream) or as a JSON body
+// { audio_b64, ext?, conversation_id? } (the watch sends base64 so it can ride the zml httpRequest relay).
 // Forwards audio to the self-hosted Whisper service, then runs the assistant on the transcript.
-router.post('/transcribe', express.raw({ type: () => true, limit: '12mb' }), async (req, res) => {
-  const buf = req.body;
+router.post('/transcribe', express.raw({ type: 'application/octet-stream', limit: '12mb' }), async (req, res) => {
+  let buf = null, ext = 'wav';
+  if (Buffer.isBuffer(req.body) && req.body.length) {
+    buf = req.body;
+  } else if (req.body && req.body.audio_b64) {
+    try { buf = Buffer.from(req.body.audio_b64, 'base64'); } catch (e) {}
+    if (req.body.ext) ext = String(req.body.ext).replace(/[^a-z0-9]/gi, '') || 'wav';
+  }
   if (!buf || !buf.length) return res.status(400).json({ error: 'no_audio' });
-  const conv = req.get('X-Conversation') || 'watch';
+  const conv = (req.body && req.body.conversation_id) || req.get('X-Conversation') || 'watch';
   try {
     const fd = new FormData();
-    fd.append('audio_file', new Blob([buf]), 'audio.wav');
+    fd.append('audio_file', new Blob([buf]), 'audio.' + ext);
     const r = await fetch(`${cfg.whisperUrl}/asr?task=transcribe&language=en&output=json&encode=true`, { method: 'POST', body: fd });
     if (!r.ok) return res.status(502).json({ error: 'stt_failed', status: r.status });
     const j = await r.json().catch(() => ({}));

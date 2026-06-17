@@ -91,6 +91,7 @@ app.use('/api/calendar', require('./routes/calendar'));
 app.use('/api/mail', require('./routes/mail'));
 app.use('/api/tasks', require('./routes/tasks'));
 app.use('/api/bookmarks', require('./routes/bookmarks'));
+app.use('/api/google', require('./routes/google'));
 app.use('/api/spaces', require('./routes/spaces'));
 app.use('/api/notes', require('./routes/notes'));
 app.get('/api/reminders', (req, res) =>

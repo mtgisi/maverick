@@ -27,6 +27,8 @@ router.get('/', (req, res) => {
       tasks: charliework.enabled(),
       bookmarks: bookmarks.enabled(),
       containers: containers.enabled(),
+      youtube: cfg.keyApisEnabled,
+      maps: cfg.keyApisEnabled,
     },
     googleAccounts: oauth.listAccounts().map(a => ({ email: a.email, label: a.label })),
   });

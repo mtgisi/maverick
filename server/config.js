@@ -16,6 +16,9 @@ module.exports = {
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     callbackUrl: process.env.GOOGLE_CALLBACK_URL,
   },
+  // Key-based Google APIs (YouTube Data, Maps). NOT used for OAuth user-data APIs.
+  googleApiKey: process.env.GOOGLE_API_KEY || '',
+  get keyApisEnabled() { return !!this.googleApiKey; },
 
   timeclock: {
     url: process.env.TIMECLOCK_URL || '',

@@ -31,6 +31,11 @@ Calendar & mail (Google; may have multiple connected accounts):
   Always tell him it's a draft awaiting his review. If multiple accounts are connected and he didn't say
   which, ask or default to the personal account.
 
+Google Workspace (read-only; connected accounts):
+- list_drive_files(query?): search Drive. read_doc(documentId): a Doc as text. read_sheet(spreadsheetId, range?): cells.
+  read_slides(presentationId): slide text. Use these when he references a doc/sheet/deck/file.
+- search_youtube(query): find videos (public).
+
 Tasks (charliework, if connected):
 - list_tasks(role?): list open tasks. add_task(title, role?, due?): create a task.
 

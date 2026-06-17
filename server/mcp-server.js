@@ -12,6 +12,8 @@ const charliework = require('./integrations/charliework');
 const bookmarks = require('./integrations/bookmarks');
 const containers = require('./integrations/containers');
 const gcal = require('./google/client');
+const workspace = require('./google/workspace');
+const gpublic = require('./google/public');
 
 const CONV = process.env.MAVERICK_CONVERSATION_ID || 'default';
 
@@ -65,6 +67,16 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { query: { type: 'string' } } } },
   { name: 'container_status', description: 'Read-only summary of server containers (only if enabled).',
     inputSchema: { type: 'object', properties: {} } },
+  { name: 'list_drive_files', description: 'Search/list Google Drive files (read-only).',
+    inputSchema: { type: 'object', properties: { query: { type: 'string' }, account: { type: 'string' } } } },
+  { name: 'read_doc', description: 'Read a Google Doc as plain text.',
+    inputSchema: { type: 'object', properties: { documentId: { type: 'string' }, account: { type: 'string' } }, required: ['documentId'] } },
+  { name: 'read_sheet', description: 'Read a range from a Google Sheet.',
+    inputSchema: { type: 'object', properties: { spreadsheetId: { type: 'string' }, range: { type: 'string', description: "A1 range, e.g. 'Sheet1!A1:D20'." }, account: { type: 'string' } }, required: ['spreadsheetId'] } },
+  { name: 'read_slides', description: 'Read text from a Google Slides presentation.',
+    inputSchema: { type: 'object', properties: { presentationId: { type: 'string' }, account: { type: 'string' } }, required: ['presentationId'] } },
+  { name: 'search_youtube', description: 'Search YouTube for videos (public data, API key).',
+    inputSchema: { type: 'object', properties: { query: { type: 'string' }, max: { type: 'number' } }, required: ['query'] } },
 ];
 
 const server = new Server({ name: 'maverick', version: '0.1.0' }, { capabilities: { tools: {} } });
@@ -156,6 +168,35 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const res = await containers.status();
         const running = res.containers.filter(c => c.state === 'running').length;
         return text(`${running}/${res.count} running.\n` + res.containers.map(c => `- ${c.name}: ${c.status}`).join('\n'));
+      }
+      case 'list_drive_files': {
+        const res = await workspace.listDriveFiles({ account: a.account, query: a.query });
+        if (!res.connected) return text('No Google account connected yet. Connect one in Settings.');
+        return text((res.files || []).map(f => `- ${f.name} (${f.mimeType}) ${f.webViewLink || ''}`).join('\n') || '(no files)');
+      }
+      case 'read_doc': {
+        const res = await workspace.readDoc({ account: a.account, documentId: a.documentId });
+        if (!res.connected) return text('No Google account connected yet.');
+        if (res.error) return text(`error: ${res.error}`);
+        return text(`# ${res.title}\n\n${res.text}`);
+      }
+      case 'read_sheet': {
+        const res = await workspace.readSheet({ account: a.account, spreadsheetId: a.spreadsheetId, range: a.range });
+        if (!res.connected) return text('No Google account connected yet.');
+        if (res.error) return text(`error: ${res.error}`);
+        return text({ range: res.range, values: res.values });
+      }
+      case 'read_slides': {
+        const res = await workspace.readSlides({ account: a.account, presentationId: a.presentationId });
+        if (!res.connected) return text('No Google account connected yet.');
+        if (res.error) return text(`error: ${res.error}`);
+        return text(`# ${res.title}\n\n` + (res.slides || []).map((s, i) => `Slide ${i + 1}:\n${s}`).join('\n\n'));
+      }
+      case 'search_youtube': {
+        const res = await gpublic.searchYouTube({ query: a.query, max: a.max });
+        if (!res.enabled) return text('YouTube is not enabled (no API key set).');
+        if (res.error) return text(`error: ${res.error}`);
+        return text((res.results || []).map(v => `- ${v.title} — ${v.channel}\n  ${v.url}`).join('\n') || '(no results)');
       }
       default:
         return text(`unknown tool: ${name}`);

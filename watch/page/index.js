@@ -199,8 +199,19 @@ Page(
         timeout: 50000,
       })
         .then((res) => {
-          let reply = 'Done.';
-          try { const d = typeof res.body === 'string' ? JSON.parse(res.body) : res.body; if (d && d.reply) reply = d.reply; } catch (e) {}
+          // zml/Zepp fetch response shape varies — probe several fields, parse strings, and
+          // fall back to showing the raw structure so any mismatch is visible (not a blank box).
+          let reply = '';
+          try {
+            let b = res;
+            if (res && typeof res === 'object') {
+              b = res.body !== undefined ? res.body : (res.data !== undefined ? res.data : (res.result !== undefined ? res.result : res));
+            }
+            if (typeof b === 'string') { try { b = JSON.parse(b); } catch (e) {} }
+            if (b && typeof b === 'object' && b.reply) reply = b.reply;
+            else if (typeof b === 'string') reply = b;
+          } catch (e) {}
+          if (!reply) reply = 'raw: ' + JSON.stringify(res).slice(0, 200);
           done(reply);
         })
         .catch(() => done('Could not reach Maverick.'));

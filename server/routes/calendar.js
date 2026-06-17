@@ -6,7 +6,7 @@ const router = express.Router();
 // GET /api/calendar?date=YYYY-MM-DD&account=label
 router.get('/', async (req, res) => {
   try {
-    const data = await gcal.listEvents({ account: req.query.account, date: req.query.date });
+    const data = await gcal.listEvents({ account: req.query.account, date: req.query.date, scope: req.query.scope });
     res.json(data);
   } catch (e) {
     res.status(502).json({ error: e.message });

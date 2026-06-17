@@ -51,10 +51,11 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {
       account: { type: 'string', description: 'Optional account label/email; omit for all.' },
     } } },
-  { name: 'list_calendar_events', description: 'Read Google Calendar events for a day across connected accounts.',
+  { name: 'list_calendar_events', description: "Read Google Calendar events for a day. Scope controls which calendars: 'mine' (default — Matthew's own calendars plus events he's invited to), 'resource'/'work' (school resource/room calendars), 'all'.",
     inputSchema: { type: 'object', properties: {
       date: { type: 'string', description: 'YYYY-MM-DD (local). Omit for today.' },
       account: { type: 'string', description: 'Optional account label/email; omit for all.' },
+      scope: { type: 'string', enum: ['mine', 'resource', 'work', 'shared', 'all'], description: "Default 'mine'. Use 'resource' or 'work' for 'what's going on at work' / school resource calendars; 'all' for everything." },
     } } },
   { name: 'draft_email', description: 'Create a Gmail DRAFT (never sends). Tell Matthew it is a draft for his review.',
     inputSchema: { type: 'object', properties: {
@@ -144,13 +145,13 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const res = await gcal.listCalendars({ account: a.account });
         if (!res.connected) return text('No Google account connected yet. Connect one in Settings.');
         if (!res.calendars.length) return text('(no calendars)');
-        return text(res.calendars.map(c => c.error ? `(! ${c.error})` : `- ${c.summary}${c.primary ? ' (primary)' : ''} [${c.account}]`).join('\n'));
+        return text(res.calendars.map(c => c.error ? `(! ${c.error})` : `- ${c.summary} [${c.kind}${c.primary ? ', primary' : ''}] (${c.account})`).join('\n'));
       }
       case 'list_calendar_events': {
-        const res = await gcal.listEvents({ account: a.account, date: a.date });
+        const res = await gcal.listEvents({ account: a.account, date: a.date, scope: a.scope });
         if (!res.connected) return text('No Google account connected yet. Connect one in Settings.');
-        if (!res.events.length) return text(`No events for ${res.day}.`);
-        return text(res.events.map(e => e.error ? `(! ${e.error})` : `${e.time || 'all day'} · ${e.title}${e.location ? ' @ ' + e.location : ''} [${e.account}]`).join('\n'));
+        if (!res.events.length) return text(`No events for ${res.day} (scope: ${a.scope || 'mine'}).`);
+        return text(res.events.map(e => e.error ? `(! ${e.error})` : `${e.time || 'all day'} · ${e.title}${e.location ? ' @ ' + e.location : ''} [${e.calendar}]`).join('\n'));
       }
       case 'draft_email': {
         const res = await gcal.createDraft({ account: a.account, to: a.to, subject: a.subject, body: a.body });

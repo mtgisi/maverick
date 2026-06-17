@@ -15,6 +15,27 @@ function dayBounds(dateStr) {
   return { day, timeMin: start.toISOString(), timeMax: end.toISOString() };
 }
 
+// Classify a calendarList entry so the assistant can scope queries:
+//   owned    = your own calendars (you're the owner, or your primary)
+//   resource = school/org resource calendars (rooms, equipment) — Google resource ids, or named like one
+//   shared   = calendars shared/subscribed to you that you don't own (reader/writer)
+function calKind(c) {
+  if (c.primary || c.accessRole === 'owner') return 'owned';
+  const id = c.id || '';
+  if (/@resource\.calendar\.google\.com$/i.test(id) || /\b(resource|room|lab|cart|library|projector|chromebook)\b/i.test(c.summary || '')) return 'resource';
+  return 'shared';
+}
+
+// Which calendars a scope selects. scope: 'mine'(default) | 'resource'/'work' | 'shared' | 'all'.
+function scopeAllows(kind, scope) {
+  switch (scope) {
+    case 'all': return true;
+    case 'resource': case 'work': return kind === 'resource';
+    case 'shared': return kind === 'shared';
+    case 'mine': default: return kind === 'owned';
+  }
+}
+
 // List all calendars across one or all connected accounts.
 async function listCalendars({ account } = {}) {
   const entries = account ? [oauth.clientFor(account)].filter(Boolean) : oauth.allClients();
@@ -31,6 +52,7 @@ async function listCalendars({ account } = {}) {
           summary: c.summary || c.id,
           primary: !!c.primary,
           accessRole: c.accessRole || '',
+          kind: calKind(c),
           account: acct.label || acct.email,
         });
       }
@@ -43,7 +65,7 @@ async function listCalendars({ account } = {}) {
 
 // List events across one or all connected accounts for a given local day.
 // When calendarId is omitted, enumerates every calendar on each account; otherwise queries just that one.
-async function listEvents({ account, date, calendarId } = {}) {
+async function listEvents({ account, date, calendarId, scope = 'mine' } = {}) {
   const entries = account ? [oauth.clientFor(account)].filter(Boolean) : oauth.allClients();
   if (!entries.length) return { connected: false, events: [] };
   const { day, timeMin, timeMax } = dayBounds(date);
@@ -55,25 +77,36 @@ async function listEvents({ account, date, calendarId } = {}) {
     const acctName = acct.label || acct.email;
     try {
       const cal = google.calendar({ version: 'v3', auth: client });
-      // Resolve which calendars to query: the explicit one, or all of this account's calendars.
+      // Resolve which calendars to query: the explicit one, or this account's calendars filtered by scope.
       let cals;
       if (calendarId) {
-        cals = [{ id: calendarId, summary: calendarId }];
+        cals = [{ id: calendarId, summary: calendarId, kind: 'owned' }];
       } else {
         const { data } = await cal.calendarList.list();
-        cals = (data.items || []).map(c => ({ id: c.id, summary: c.summary || c.id }));
+        cals = (data.items || [])
+          .map(c => ({ id: c.id, summary: c.summary || c.id, kind: calKind(c) }))
+          // 'mine' also peeks at shared calendars (for events you're invited to); resource is excluded unless asked.
+          .filter(c => scopeAllows(c.kind, scope) || (scope === 'mine' && c.kind === 'shared'));
       }
       for (const c of cals) {
+        // On shared calendars under the default 'mine' scope, keep only events you're actually a part of.
+        const selfOnly = !calendarId && scope === 'mine' && c.kind === 'shared';
         try {
           const { data } = await cal.events.list({
             calendarId: c.id, timeMin, timeMax, singleEvents: true, orderBy: 'startTime', maxResults: PER_CAL,
           });
           for (const ev of (data.items || [])) {
+            if (selfOnly) {
+              const mine = (ev.attendees || []).some(a => a.self && a.responseStatus !== 'declined') ||
+                (ev.organizer && ev.organizer.self) || (ev.creator && ev.creator.self);
+              if (!mine) continue;
+            }
             const startISO = ev.start && (ev.start.dateTime || ev.start.date);
             all.push({
               id: ev.id,
               account: acctName,
               calendar: c.summary,
+              calendarKind: c.kind,
               title: ev.summary || '(no title)',
               location: ev.location || '',
               start: startISO,

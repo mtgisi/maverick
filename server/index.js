@@ -98,7 +98,28 @@ app.get('/api/reminders', (req, res) =>
   res.json(db.prepare("SELECT id, text, fire_at, sent FROM reminders WHERE sent=0 ORDER BY fire_at ASC LIMIT 100").all()));
 
 // --- App shell (protected) + static PWA assets (manifest/sw/icons public) ---
-app.get('/', requireAuth, (req, res) => res.sendFile(path.join(__dirname, '../public/index.html')));
+// Manifest and app-shell title carry the wordmark, so both are generated from BRAND_NAME
+// rather than served as static "Maverick" strings — the brand flips everywhere from one env var.
+const INDEX_HTML = require('fs').readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
+
+app.get('/manifest.webmanifest', (req, res) => {
+  res.type('application/manifest+json').json({
+    name: cfg.BRAND_NAME,
+    short_name: cfg.BRAND_NAME,
+    description: cfg.TAGLINE,
+    start_url: '/', scope: '/', display: 'standalone', orientation: 'portrait',
+    background_color: '#0f0c07', theme_color: '#141109',
+    icons: [
+      { src: '/icons/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+      { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+    ],
+  });
+});
+
+app.get('/', requireAuth, (req, res) =>
+  res.type('html').send(INDEX_HTML.replace(/<title>[^<]*<\/title>/, `<title>${cfg.BRAND_NAME}</title>`)));
 app.use(express.static(path.join(__dirname, '../public')));
 
 // --- Reminder poller — every 30s, fire any due reminders via ntfy ---

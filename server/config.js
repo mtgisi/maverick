@@ -3,10 +3,15 @@ const BRAND_NAME = process.env.BRAND_NAME || 'Maverick';
 
 module.exports = {
   BRAND_NAME,
-  TAGLINE: 'Your day, balanced for you.',
+  TAGLINE: process.env.TAGLINE || 'Your day, balanced for you.',
+  // Whose assistant this is. Blank = the assistant addresses the signed-in user generically ("you").
+  OWNER_NAME: process.env.OWNER_NAME || '',
   TZ: process.env.TZ || 'America/Chicago',
   MODEL: process.env.MAVERICK_MODEL || 'claude-haiku-4-5',
   PORT: process.env.PORT || 3000,
+
+  // Accent palette for spaces (used to seed defaults + auto-assign a color to new spaces).
+  SPACE_PALETTE: ['#e6a92c', '#9ca980', '#c2906a', '#6fa195', '#7e93b0', '#a98aa0', '#cf9f5a', '#8f9bb0', '#a3a392'],
 
   ALLOWED_EMAILS: (process.env.ALLOWED_GOOGLE_EMAILS || '')
     .split(',').map(s => s.trim().toLowerCase()).filter(Boolean),

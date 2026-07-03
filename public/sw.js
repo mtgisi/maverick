@@ -1,7 +1,7 @@
 /* Maverick service worker — caches static assets only.
    IMPORTANT: never handle navigation requests or redirect-able responses here, or Safari throws
    "Response served by service worker has redirections" (our '/' 302→/login auth redirect). */
-const CACHE = 'maverick-v4';
+const CACHE = 'maverick-v5';
 const ASSETS = ['/styles.css', '/app.js', '/manifest.webmanifest', '/icons/icon.svg'];
 
 self.addEventListener('install', e => {

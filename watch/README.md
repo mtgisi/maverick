@@ -17,7 +17,7 @@ list) — by design we don't bind core actions to them.
 Edit `config.js`:
 
 ```js
-export const API_BASE = 'https://maverick.matthewgisi.com';
+export const API_BASE = 'https://maverick.example.com';
 export const DEVICE_TOKEN = '<the DEVICE_TOKEN from the server .env>';
 ```
 

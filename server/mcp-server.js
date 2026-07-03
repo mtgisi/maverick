@@ -17,6 +17,13 @@ const gpublic = require('./google/public');
 
 const CONV = process.env.MAVERICK_CONVERSATION_ID || 'default';
 
+// User-defined spaces live in the DB. Read them fresh each turn (this process is spawned per chat turn)
+// so tool descriptions advertise the current space keys and untagged memories land in a sane default.
+let SPACE_KEYS = [];
+try { SPACE_KEYS = db.prepare('SELECT key FROM spaces ORDER BY sort ASC').all().map(r => r.key); } catch (_) {}
+const SPACE_HINT = SPACE_KEYS.length ? SPACE_KEYS.join(', ') : 'e.g. work, personal';
+const defaultRole = () => SPACE_KEYS.find(k => k.toLowerCase() === 'personal') || SPACE_KEYS[0] || 'personal';
+
 const fmtLocal = iso => iso ? new Date(iso).toLocaleString('en-US', {
   timeZone: TZ, weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
 }) : null;
@@ -25,21 +32,21 @@ const dayInTZ = (d = new Date()) =>
   new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
 
 const TOOLS = [
-  { name: 'save_memory', description: 'Save a note, idea, or fact Matthew wants remembered.',
+  { name: 'save_memory', description: 'Save a note, idea, or fact to remember.',
     inputSchema: { type: 'object', properties: {
       text: { type: 'string', description: 'The thing to remember.' },
       kind: { type: 'string', description: 'Optional: note, idea, fact, reminder.' },
-      role: { type: 'string', description: 'Optional space/role, e.g. Teaching, Robotics, Personal.' },
+      role: { type: 'string', description: `Optional space key to tag this with. Available: ${SPACE_HINT}.` },
     }, required: ['text'] } },
   { name: 'list_memories', description: 'List recent memories, optionally filtered by a search term.',
     inputSchema: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number' } } } },
   { name: 'schedule_reminder', description: 'Schedule a phone push (ntfy) at a specific time. Use for "remind me ... at/in/on <time>".',
     inputSchema: { type: 'object', properties: {
       text: { type: 'string', description: 'Notification body.' },
-      fire_at: { type: 'string', description: 'Full ISO-8601 UTC instant, computed from the current time + his timezone.' },
+      fire_at: { type: 'string', description: "Full ISO-8601 UTC instant, computed from the current time + the user's timezone." },
     }, required: ['text', 'fire_at'] } },
   { name: 'list_reminders', description: 'List upcoming (not-yet-sent) reminders.', inputSchema: { type: 'object', properties: {} } },
-  { name: 'get_timesheet', description: "Read Matthew's timeclock entries for a day (default today).",
+  { name: 'get_timesheet', description: "Read your timeclock entries for a day (default today).",
     inputSchema: { type: 'object', properties: { date: { type: 'string', description: 'YYYY-MM-DD (local). Omit for today.' } } } },
   { name: 'propose_timesheet_change', description: "Propose changing a timesheet clock_in/clock_out. Creates a pending proposal confirmed in the UI — does NOT apply.",
     inputSchema: { type: 'object', properties: {
@@ -47,17 +54,17 @@ const TOOLS = [
       new_value: { type: 'string', description: 'Full ISO-8601 UTC instant.' },
       summary: { type: 'string', description: 'Friendly local-time summary, e.g. "Clock-out 5:34 PM -> 6:34 PM".' },
     }, required: ['entry_id', 'field', 'new_value'] } },
-  { name: 'list_calendars', description: "List all of Matthew's Google calendars across connected accounts.",
+  { name: 'list_calendars', description: "List all Google calendars across connected accounts.",
     inputSchema: { type: 'object', properties: {
       account: { type: 'string', description: 'Optional account label/email; omit for all.' },
     } } },
-  { name: 'list_calendar_events', description: "Read Google Calendar events for a day. Scope controls which calendars: 'mine' (default — Matthew's own calendars plus events he's invited to), 'resource'/'work' (school resource/room calendars), 'all'.",
+  { name: 'list_calendar_events', description: "Read Google Calendar events for a day. Scope controls which calendars: 'mine' (default — your own calendars plus events you're invited to), 'resource'/'work' (shared resource/room calendars), 'all'.",
     inputSchema: { type: 'object', properties: {
       date: { type: 'string', description: 'YYYY-MM-DD (local). Omit for today.' },
       account: { type: 'string', description: 'Optional account label/email; omit for all.' },
       scope: { type: 'string', enum: ['mine', 'resource', 'work', 'shared', 'all'], description: "Default 'mine'. Use 'resource' or 'work' for 'what's going on at work' / school resource calendars; 'all' for everything." },
     } } },
-  { name: 'draft_email', description: 'Create a Gmail DRAFT (never sends). Tell Matthew it is a draft for his review.',
+  { name: 'draft_email', description: 'Create a Gmail DRAFT (never sends). Tell the user it is a draft for their review.',
     inputSchema: { type: 'object', properties: {
       to: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' },
       account: { type: 'string', description: "Which connected account: 'personal' | 'work' | email. Defaults to first connected." },
@@ -107,7 +114,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   try {
     switch (name) {
       case 'save_memory': {
-        db.prepare('INSERT INTO memories (text, kind, role) VALUES (?,?,?)').run(a.text, a.kind || 'note', a.role || 'Personal');
+        db.prepare('INSERT INTO memories (text, kind, role) VALUES (?,?,?)').run(a.text, a.kind || 'note', a.role || defaultRole());
         return text(`Saved: "${a.text}"`);
       }
       case 'list_memories': {
@@ -115,7 +122,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const rows = a.query
           ? db.prepare('SELECT text, kind, role, created_at FROM memories WHERE text LIKE ? ORDER BY id DESC LIMIT ?').all(`%${a.query}%`, lim)
           : db.prepare('SELECT text, kind, role, created_at FROM memories ORDER BY id DESC LIMIT ?').all(lim);
-        return text(rows.length ? rows.map(r => `- ${r.text}${r.role && r.role !== 'Personal' ? ` [${r.role}]` : ''}`).join('\n') : '(no memories yet)');
+        const defRole = defaultRole();
+        return text(rows.length ? rows.map(r => `- ${r.text}${r.role && r.role !== defRole ? ` [${r.role}]` : ''}`).join('\n') : '(no memories yet)');
       }
       case 'schedule_reminder': {
         if (!Number.isFinite(Date.parse(a.fire_at))) return text('error: fire_at must be an ISO-8601 instant');

@@ -20,7 +20,7 @@ Built on the **Aureo** design language — editorial serif, a single goldenrod a
 ## What it does
 
 - **Assistant** — chat + live dictation (Web Speech API), powered by the Claude Code CLI with a custom MCP tool server.
-- **Spaces / roles** — scope the whole app to one context (Teaching, Field Science, Robotics, …).
+- **Spaces / roles** — define your own contexts (Work, Personal, a side project, …) and scope the whole app to one. Add, rename, recolor and remove them in-app; the assistant tags what it saves by space.
 - **Calendar** — unified read-only view across multiple connected Google accounts (personal + work).
 - **Tasks** — surfaced from an external task manager when connected.
 - **Mail** — the assistant **drafts** emails on your accounts; it **never sends**.
@@ -78,7 +78,9 @@ All configuration is environment-driven; see [`.env.example`](.env.example) for 
 
 | Variable | Purpose |
 | --- | --- |
-| `BRAND_NAME` | Wordmark — `Maverick` (default) or `Aureo`. |
+| `BRAND_NAME` | Wordmark — `Maverick` (default) or anything you like. |
+| `OWNER_NAME` | Whose assistant this is (blank = generic "you"). |
+| `DEFAULT_SPACES` | Comma-separated starter spaces seeded on first run. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth app (login + connected accounts). |
 | `ALLOWED_GOOGLE_EMAILS` | Comma-separated allow-list for login. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Claude Code subscription auth for the brain. |

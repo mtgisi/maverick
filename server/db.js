@@ -1,6 +1,7 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const { SPACE_PALETTE } = require('./config');
 
 const DB_PATH = process.env.MAVERICK_DB_PATH || '/app/data/maverick.db';
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -77,21 +78,27 @@ db.exec(`
   );
 `);
 
-// Seed spaces once (matches Aureo brand guide role palette).
-const seedSpaces = [
-  ['Teaching', 'Teaching', '#e6a92c', 1],
-  ['Tech', 'Tech Coordinator', '#9ca980', 2],
-  ['Freelance', 'Freelance', '#c2906a', 3],
-  ['Field Sci', 'Field Science', '#6fa195', 4],
-  ['Ultimate', 'Ultimate', '#7e93b0', 5],
-  ['Esports', 'Esports', '#a98aa0', 6],
-  ['Robotics', 'Robotics', '#cf9f5a', 7],
-  ['Media', 'Media & Broadcast', '#8f9bb0', 8],
-  ['Personal', 'Personal', '#a3a392', 9],
-];
+// Seed a neutral, generic set of spaces on first run — every user renames/adds/removes these
+// from the Spaces screen. Override the starter set with DEFAULT_SPACES (comma-separated labels).
+const slug = s => String(s || '').toLowerCase().trim()
+  .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32) || 'space';
+
+const defaultLabels = (process.env.DEFAULT_SPACES || 'Work, Personal, Health, Learning, Projects, Finance')
+  .split(',').map(s => s.trim()).filter(Boolean);
+// De-dupe by key so colliding labels (e.g. "Work" twice, or "Side-Project"/"Side Project") never
+// collide on the primary key and crash the seed at boot.
+const seenKeys = new Set();
+const seedSpaces = [];
+defaultLabels.forEach(label => {
+  let key = slug(label), n = 2;
+  while (seenKeys.has(key)) key = `${slug(label)}-${n++}`;
+  seenKeys.add(key);
+  seedSpaces.push([key, label, SPACE_PALETTE[seedSpaces.length % SPACE_PALETTE.length], seedSpaces.length + 1]);
+});
+
 const count = db.prepare('SELECT COUNT(*) n FROM spaces').get().n;
 if (count === 0) {
-  const ins = db.prepare('INSERT INTO spaces (key, label, color, sort) VALUES (?,?,?,?)');
+  const ins = db.prepare('INSERT OR IGNORE INTO spaces (key, label, color, sort) VALUES (?,?,?,?)');
   const tx = db.transaction(rows => rows.forEach(r => ins.run(...r)));
   tx(seedSpaces);
 }

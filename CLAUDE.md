@@ -2,8 +2,12 @@
 
 Mobile-first personal-assistant web app + watch companion, at `maverick.matthewgisi.com`,
 Google-SSO gated to a single email. Brand/visual language = **Aureo** (dark editorial, goldenrod
-on warm black). Product name = **Maverick** (set via `BRAND_NAME`, default "Maverick" — set it to
-"Aureo" to flip the wordmark everywhere).
+on warm black). Product name = **Maverick** (set via `BRAND_NAME`, default "Maverick").
+
+**Generic / reusable**: nothing is hardcoded to one owner. `OWNER_NAME` (blank = generic "you")
+names the assistant's owner in the system prompt. **Spaces are user-defined** — a `spaces` table
+(CRUD at `/api/spaces`) seeded on first run from `DEFAULT_SPACES`; the UI, chip filters, colors,
+demo data, and the agent's memory-tagging all read that table dynamically. No topics are baked in.
 
 Successor to the `jarvis` POC — same architecture (Claude Code CLI brain + MCP tools), broader scope.
 **It does NOT touch jarvis or any other app's files** — it duplicates the pattern into its own stack

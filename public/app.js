@@ -2,12 +2,7 @@
    Renders the design faithfully; pulls real data where connected, demo data otherwise. */
 'use strict';
 
-const ROLE_COLORS = {
-  'All':'#e6a92c','Teaching':'#e6a92c','Tech':'#9ca980','Freelance':'#c2906a',
-  'Field Sci':'#6fa195','Ultimate':'#7e93b0','Esports':'#a98aa0','Robotics':'#cf9f5a',
-  'Media':'#8f9bb0','Personal':'#a3a392'
-};
-const ROLE_ORDER = ['All','Teaching','Tech','Freelance','Field Sci','Ultimate','Esports','Robotics','Media','Personal'];
+const ACCENT = '#e6a92c';   // brand gold — default when a space has no color / for the "All" filter
 
 const ICONS = {
   home:'<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" stroke-linejoin="round"/>',
@@ -42,20 +37,29 @@ function md(s){
 
 const NAV = [['home','Home'],['calendar','Calendar'],['tasks','Tasks'],['spaces','Spaces']];
 
-// Demo fallbacks (shown until a real data source is connected; tagged "demo" in the UI).
-const DEMO_TASKS = [
-  {id:1,title:'Pack tide charts & spare GoPro',role:'Field Sci',due:'Due by 12:30 PM',done:false},
-  {id:2,title:'Flash drive-base firmware',role:'Robotics',due:'Due before 2:00 standup',done:false},
-  {id:3,title:'Send invoice — Reef Co.',role:'Freelance',due:'Due today',done:false},
-  {id:4,title:'Grade quiz 4 — Bio',role:'Teaching',due:'Tomorrow',done:false},
-  {id:6,title:'Print scouting sheets ×6',role:'Robotics',due:'Tomorrow',done:false},
-];
-const DEMO_EVENTS = [
-  {time:'8:00',title:'Bio — Period 1',sub:'Room 204 · Teaching',role:'Teaching'},
-  {time:'1:10',title:'St. Croix tide survey',sub:'Reef site B · Field Sci',role:'Field Sci'},
-  {time:'2:00',title:'Robotics standup',sub:'Lab 3 · Robotics',role:'Robotics'},
-  {time:'5:30',title:'Ultimate scrimmage',sub:'Turf field · Ultimate',role:'Ultimate'},
-];
+// Demo fallbacks — shown until a real data source is connected; tagged "demo" in the UI.
+// Generated against the user's own spaces so the sample content matches their contexts.
+function demoSpaces(){ return S.spaces.length ? S.spaces : [{key:'personal',label:'Personal'}]; }
+function demoTasks(){
+  const sp = demoSpaces();
+  const rows = [
+    ['Review this week’s priorities','Due today'],
+    ['Reply to two pending messages','Due by 3:00 PM'],
+    ['Plan tomorrow’s schedule','Tomorrow'],
+    ['Tidy up notes & follow-ups','This week'],
+  ];
+  return rows.map((r,i)=>({id:'demo'+i,title:r[0],role:sp[i%sp.length].key,due:r[1],done:false}));
+}
+function demoEvents(){
+  const sp = demoSpaces();
+  const rows = [
+    ['9:00','Focus block','Deep work'],
+    ['12:30','Lunch & reset',''],
+    ['2:00','Afternoon check-in','Quick sync'],
+    ['5:30','Wrap up the day',''],
+  ];
+  return rows.map((r,i)=>({time:r[0],title:r[1],sub:(r[2]?r[2]+' · ':'')+sp[i%sp.length].label,role:sp[i%sp.length].key}));
+}
 
 const S = {
   cfg:null, tab:'home', role:'All', detail:null, whyOpen:false,
@@ -71,8 +75,11 @@ const api = async (path, opts) => {
   return r.json();
 };
 
-/* ---------- helpers ---------- */
-const rc = r => ROLE_COLORS[r] || '#e6a92c';
+/* ---------- helpers (spaces are user-defined, loaded from /api/spaces) ---------- */
+const spaceMap = () => S.spaces.reduce((m,s)=>(m[s.key]=s,m),{});
+const rc = r => r==='All' ? ACCENT : ((spaceMap()[r]||{}).color || ACCENT);
+const roleOrder = () => ['All', ...S.spaces.map(s=>s.key)];
+const roleLabel = k => k==='All' ? 'All' : ((spaceMap()[k]||{}).label || k);
 const inRole = r => S.role==='All' || r===S.role;
 const greeting = () => { const h=new Date().getHours(); return h<12?'Good morning':h<18?'Good afternoon':'Good evening'; };
 const todayStr = () => new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
@@ -93,15 +100,19 @@ async function loadTasks(){
   try {
     const d = await api('/tasks');
     S.tasksConnected = !!d.connected;
-    const CAT2ROLE={tech:'Tech',biz_comp:'Teaching',esports:'Esports',robotics:'Robotics',st_croix:'Field Sci',ultimate:'Ultimate',personal:'Personal'};
-    S.tasks = d.connected ? (d.tasks||[]).map((t,i)=>{
-      const cat=String(t.category||'').split(',')[0].trim();
-      return {id:t.id||i,title:t.title||t.name,role:CAT2ROLE[cat]||'Personal',due:t.due_date||t.due||'',done:t.status?t.status==='done':!!(t.done||t.completed)};
-    }) : null;
+    const fallbackRole = () => (S.spaces[0] && S.spaces[0].key) || 'personal';
+    const catToRole = cat => {
+      const c = String(cat||'').split(',')[0].trim().toLowerCase();
+      const hit = S.spaces.find(s => s.key.toLowerCase()===c || s.label.toLowerCase()===c);
+      return hit ? hit.key : fallbackRole();
+    };
+    S.tasks = d.connected ? (d.tasks||[]).map((t,i)=>(
+      {id:t.id||i,title:t.title||t.name,role:catToRole(t.category),due:t.due_date||t.due||'',done:t.status?t.status==='done':!!(t.done||t.completed)}
+    )) : null;
   } catch(_){ S.tasksConnected=false; S.tasks=null; }
 }
-const events = () => S.events || DEMO_EVENTS;
-const tasks = () => S.tasks || DEMO_TASKS;
+const events = () => S.events || demoEvents();
+const tasks = () => S.tasks || demoTasks();
 const isDemoTasks = () => !S.tasksConnected;
 const isDemoEvents = () => !S.eventsConnected;
 
@@ -117,6 +128,28 @@ async function send(text){
   } catch(e){ S.messages.push({from:'ai',text:'Something went wrong reaching the assistant.'}); }
   S.thinking=false; render(); scrollChat();
 }
+/* ---------- spaces management ---------- */
+async function addSpace(){
+  const label = (prompt('Name this space (e.g. Work, Family, Side project):')||'').trim();
+  if(!label) return;
+  try { await api('/spaces',{method:'POST',body:JSON.stringify({label})}); } catch(_){}
+  await loadSpaces(); render();
+}
+async function editSpace(key){
+  const cur = S.spaces.find(s=>s.key===key); if(!cur) return;
+  const label = prompt('Rename space:', cur.label);
+  if(label===null) return;
+  try { await api('/spaces/'+encodeURIComponent(key),{method:'PATCH',body:JSON.stringify({label:(label||'').trim()||cur.label})}); } catch(_){}
+  await loadSpaces(); render();
+}
+async function delSpace(key){
+  const cur = S.spaces.find(s=>s.key===key);
+  if(!confirm('Delete the "'+(cur?cur.label:key)+'" space?\nItems tagged to it keep their tag but stop being counted.')) return;
+  try { await api('/spaces/'+encodeURIComponent(key),{method:'DELETE'}); } catch(_){}
+  if(S.role===key) S.role='All';
+  await loadSpaces(); render();
+}
+
 async function confirmPending(id){ await api('/timesheet/confirm',{method:'POST',body:JSON.stringify({id})}); S.pending=S.pending.filter(p=>p.id!==id); S.messages.push({from:'ai',text:'Done — applied and logged.'}); render(); }
 async function cancelPending(id){ await api('/timesheet/cancel',{method:'POST',body:JSON.stringify({id})}); S.pending=S.pending.filter(p=>p.id!==id); render(); }
 
@@ -136,9 +169,9 @@ function toggleMic(){
 
 /* ---------- render ---------- */
 function chips(){
-  return `<div class="chips">${ROLE_ORDER.map(k=>{
+  return `<div class="chips">${roleOrder().map(k=>{
     const active=S.role===k;
-    return `<button class="chip${active?' active':''}" style="${active?`background:${rc(k)}`:''}" data-role="${k}">${k}</button>`;
+    return `<button class="chip${active?' active':''}" style="${active?`background:${rc(k)}`:''}" data-role="${esc(k)}">${esc(roleLabel(k))}</button>`;
   }).join('')}</div>`;
 }
 
@@ -151,7 +184,7 @@ function homeView(){
   return `
   ${headerHTML()}
   <div class="lead">
-    <div class="now"><span class="dot"></span><span class="t">Right now${S.role!=='All'?' · '+S.role:''}</span></div>
+    <div class="now"><span class="dot"></span><span class="t">Right now${S.role!=='All'?' · '+esc(roleLabel(S.role)):''}</span></div>
     <h2>${esc(leadTitle)}</h2>
     <p>${esc(leadSub)}</p>
     ${S.whyOpen?`<div class="why">
@@ -183,8 +216,8 @@ function homeView(){
     <div class="card" data-detail="finance"><div class="k">Finance · week <span class="demo-tag">demo</span></div>
       <div class="mono" style="font-size:18px;color:var(--sage)">$214</div><div style="font-size:11.5px;color:var(--muted);margin-top:3px">left to spend</div></div>
     <div class="card span2" data-go="spaces" style="background:linear-gradient(120deg,rgba(156,169,128,.12),rgba(255,255,255,.03));border-color:rgba(156,169,128,.22);display:flex;justify-content:space-between;align-items:center">
-      <div><div class="k" style="color:var(--sage)">Spaces</div><div style="font-size:15.5px;color:var(--ink);font-weight:600">${(S.spaces.length||9)} contexts · scope your day</div></div>
-      <span class="mono" style="font-size:24px;color:var(--sage)">${S.spaces.length||9}</span></div>
+      <div><div class="k" style="color:var(--sage)">Spaces</div><div style="font-size:15.5px;color:var(--ink);font-weight:600">${S.spaces.length} context${S.spaces.length===1?'':'s'} · scope your day</div></div>
+      <span class="mono" style="font-size:24px;color:var(--sage)">${S.spaces.length}</span></div>
   </div>`;
 }
 
@@ -199,7 +232,7 @@ function headerHTML(){
 function calendarView(){
   const ev = events().filter(e=>inRole(e.role));
   return `<div class="dhead" style="justify-content:space-between"><div><div class="sub">Today</div><div class="ttl">${esc(todayStr())}</div></div>
-    <div style="font-size:12px;color:var(--muted)">${S.role==='All'?'All spaces':S.role+' space'}${isDemoEvents()?' · demo':''}</div></div>
+    <div style="font-size:12px;color:var(--muted)">${S.role==='All'?'All spaces':esc(roleLabel(S.role))+' space'}${isDemoEvents()?' · demo':''}</div></div>
     ${!S.eventsConnected?`<div class="pending" style="margin-bottom:14px"><div class="s">Connect a Google account to see your real calendar.</div><div class="a"><a class="btn" href="/connect/google?account=personal">Connect Google</a></div></div>`:''}
     <div class="agenda">${ev.map(e=>`<div class="ev"><div class="time">${esc(e.time)}</div>
       <div class="body" style="border-left-color:${rc(e.role)}"><div class="t">${esc(e.title)}</div><div class="s">${esc(e.sub)}</div></div></div>`).join('')||'<div style="color:var(--muted);padding:20px">No events.</div>'}</div>`;
@@ -207,33 +240,40 @@ function calendarView(){
 
 function tasksView(){
   const ts = tasks().filter(t=>inRole(t.role));
-  return `<div class="dhead"><div><div class="sub">${S.role==='All'?'All spaces':S.role+' space'}${isDemoTasks()?' · demo':''}</div><div class="ttl">Tasks</div></div></div>
+  return `<div class="dhead"><div><div class="sub">${S.role==='All'?'All spaces':esc(roleLabel(S.role))+' space'}${isDemoTasks()?' · demo':''}</div><div class="ttl">Tasks</div></div></div>
     ${chips()}
     ${!S.tasksConnected?`<div class="pending" style="margin:8px 0 14px"><div class="s">Showing sample tasks. Connect charliework to manage real ones.</div></div>`:''}
     <div style="display:flex;flex-direction:column;gap:9px">${ts.map(t=>`
       <div class="task${t.done?' done':''}" data-task="${t.id}">
         <span class="box${t.done?' done':''}">${t.done?'✓':''}</span>
         <div style="flex:1"><div class="t">${esc(t.title)}</div>${t.due?`<div class="due">${esc(t.due)}</div>`:''}</div>
-        <span class="role-tag" style="color:${rc(t.role)};border-color:${rc(t.role)}">${esc(t.role)}</span>
+        <span class="role-tag" style="color:${rc(t.role)};border-color:${rc(t.role)}">${esc(roleLabel(t.role))}</span>
       </div>`).join('')}</div>`;
 }
 
 function spacesView(){
-  const list = (S.spaces.length?S.spaces:ROLE_ORDER.filter(k=>k!=='All').map(k=>({key:k,label:k,color:rc(k),memories:0,notes:0})));
-  return `<div class="dhead"><div><div class="sub">Your roles & contexts</div><div class="ttl">Spaces</div></div></div>
-    <p style="font-size:13px;color:var(--muted);margin:-8px 2px 14px;line-height:1.5">Each space pulls its own tasks, events, notes and notifications into the shared modules.</p>
-    <div class="grid" style="grid-template-columns:1fr 1fr">${list.map(s=>`
-      <div class="space" data-space="${s.key}" style="border-top-color:${s.color}">
+  const list = S.spaces;
+  return `<div class="dhead" style="justify-content:space-between;align-items:flex-start">
+      <div><div class="sub">Your roles & contexts</div><div class="ttl">Spaces</div></div>
+      <button class="btn" data-space-add style="padding:7px 12px;font-size:13px">+ Add space</button></div>
+    <p style="font-size:13px;color:var(--muted);margin:-8px 2px 14px;line-height:1.5">Spaces are yours to define — each one pulls its own tasks, events, notes and notifications into the shared modules. Add, rename or remove them anytime.</p>
+    ${list.length?`<div class="grid" style="grid-template-columns:1fr 1fr">${list.map(s=>`
+      <div class="space" data-space="${esc(s.key)}" style="border-top-color:${s.color};position:relative">
+        <div class="space-tools">
+          <button data-space-edit="${esc(s.key)}" title="Rename">✎</button>
+          <button data-space-del="${esc(s.key)}" title="Delete">✕</button>
+        </div>
         <div class="sw" style="background:${s.color}"></div>
         <div class="l">${esc(s.label)}</div>
-        <div class="m">${s.memories||0} memories · ${s.notes||0} notes</div></div>`).join('')}</div>`;
+        <div class="m">${s.memories||0} memories · ${s.notes||0} notes</div></div>`).join('')}</div>`
+      :`<div style="color:var(--muted);padding:22px 4px">No spaces yet. Tap <b>+ Add space</b> to create your first context.</div>`}`;
 }
 
 function chatView(){
   const suggestions = ['Summarize my day','Draft an email','What needs me?'];
   return `<div class="chat">
     <div class="who"><span class="a compass-mark"></span><div><div style="font-size:15px;color:var(--ink);font-weight:700;font-family:var(--serif)">${esc(brand())}</div>
-      <div style="font-size:11px;color:var(--sage)">Online · ${S.role==='All'?'all spaces':'scoped to '+S.role}</div></div></div>
+      <div style="font-size:11px;color:var(--sage)">Online · ${S.role==='All'?'all spaces':'scoped to '+esc(roleLabel(S.role))}</div></div></div>
     <div style="flex:1;display:flex;flex-direction:column;gap:12px" id="chatScroll">
       ${S.messages.length?'':`<div class="msg ai"><div class="bubble">Hey — I'm ${esc(brand())}. Ask me to plan your day, draft an email, check your calendar, or adjust your timeclock.</div></div>`}
       ${S.messages.map(m=>`<div class="msg ${m.from==='user'?'user':'ai'}"><div class="bubble">${m.from==='user'?esc(m.text):md(m.text)}</div></div>`).join('')}
@@ -255,7 +295,7 @@ function detailView(){
   if(S.detail==='nutrition') return back + `<div class="lead" style="display:flex;justify-content:space-between;align-items:center;border-color:rgba(230,169,44,.22)"><div><div class="mono" style="font-size:34px;color:var(--gold)">1,240</div><div style="font-size:12px;color:var(--muted)">of 2,100 kcal</div></div><div style="text-align:right"><div class="mono" style="font-size:22px;color:var(--ink)">860</div><div style="font-size:12px;color:var(--sage)">remaining</div></div></div><div class="bar" style="height:8px;margin-top:14px"><span style="width:59%"></span></div>${macros()}`;
   if(S.detail==='sleep') return back + `<div style="display:flex;gap:11px"><div class="card" style="flex:1;cursor:default"><div class="mono" style="font-size:26px;color:var(--ink)">7h 12m</div><div style="font-size:12px;color:var(--sage);margin-top:5px">+24m vs avg</div></div><div class="card" style="flex:1;cursor:default;background:linear-gradient(155deg,#222a18,#1a1810);border-color:rgba(156,169,128,.25)"><div class="mono" style="font-size:26px;color:var(--sage)">84</div><div style="font-size:12px;color:var(--muted);margin-top:5px">sleep score</div></div></div><div class="section-label">Last 7 nights</div>${bars7()}`;
   if(S.detail==='finance') return back + `<div class="lead" style="background:linear-gradient(155deg,#222a18,#1a1810);border-color:rgba(156,169,128,.25)"><div style="display:flex;justify-content:space-between;align-items:baseline"><div><div class="mono" style="font-size:30px;color:var(--sage)">$214</div><div style="font-size:12px;color:var(--muted);margin-top:4px">left of $600 weekly budget</div></div><div class="mono" style="font-size:14px;color:var(--faint)">$386 spent</div></div><div class="bar" style="height:8px;margin-top:14px"><span style="width:64%;background:var(--sage)"></span></div></div>`;
-  if(S.detail==='workout') return back + `<div class="card" style="cursor:default"><div class="k">Up next · 5:30 PM</div><div style="font-size:17px;color:var(--ink);font-weight:700">Ultimate scrimmage</div><div style="font-size:12px;color:var(--muted);margin-top:2px">Turf field · ~90 min</div></div>`;
+  if(S.detail==='workout') return back + `<div class="card" style="cursor:default"><div class="k">Up next · 5:30 PM</div><div style="font-size:17px;color:var(--ink);font-weight:700">Evening session</div><div style="font-size:12px;color:var(--muted);margin-top:2px">~60 min</div></div>`;
   return back;
 }
 const macros=()=>`<div class="section-label">Macros</div>${[['Protein','78 / 120g',65,'var(--gold)'],['Carbs','130 / 210g',62,'var(--sage)'],['Fat','41 / 70g',58,'#cf9f5a']].map(([n,v,w,c])=>`<div style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;font-size:13px;color:var(--ink-2);margin-bottom:6px"><span>${n}</span><span class="mono" style="color:var(--muted)">${v}</span></div><div class="bar" style="height:6px;margin:0"><span style="width:${w}%;background:${c}"></span></div></div>`).join('')}`;
@@ -267,12 +307,12 @@ function render(){
     <div class="brand"><span class="logo"></span><span class="n">${esc(brand())}</span></div>
     ${NAV.map(([k,l])=>`<a class="navitem${S.tab===k?' active':''}" data-go="${k}">${svg(k,S.tab===k?'#e6a92c':'#cfc6b4',19)}<span>${l}</span></a>`).join('')}
     <div class="spaces-h">Spaces</div>
-    <div class="splist">${(S.spaces.length?S.spaces:ROLE_ORDER.filter(k=>k!=='All').map(k=>({key:k,label:k,color:rc(k),memories:0}))).map(s=>`<div class="si" data-space="${s.key}"><span class="sw" style="background:${s.color}"></span><span>${esc(s.label)}</span><span class="c">${s.memories||0}</span></div>`).join('')}</div>
-    <div class="me" data-act="settings"><span class="a">${esc(initials())}</span><div style="flex:1"><div style="font-size:13.5px;color:var(--ink);font-weight:600">${esc((S.cfg&&S.cfg.user.name)||'Account')}</div><div style="font-size:11px;color:var(--faint)">${(S.spaces.length||9)} spaces</div></div></div>`;
+    <div class="splist">${S.spaces.map(s=>`<div class="si" data-space="${esc(s.key)}"><span class="sw" style="background:${s.color}"></span><span>${esc(s.label)}</span><span class="c">${s.memories||0}</span></div>`).join('')}</div>
+    <div class="me" data-act="settings"><span class="a">${esc(initials())}</span><div style="flex:1"><div style="font-size:13.5px;color:var(--ink);font-weight:600">${esc((S.cfg&&S.cfg.user.name)||'Account')}</div><div style="font-size:11px;color:var(--faint)">${S.spaces.length} space${S.spaces.length===1?'':'s'}</div></div></div>`;
 
   // topbar (desktop shows title; mobile shows nothing here — header is in home view)
   const titles={home:'Dashboard',calendar:'Calendar',tasks:'Tasks',spaces:'Spaces',chat:brand()};
-  document.getElementById('topbar').innerHTML = `<div class="desktop-only"><div class="ttl">${esc(S.detail?titles[S.detail]||'Detail':titles[S.tab]||'')}</div><div class="sub">${esc(todayStr())} · ${S.role==='All'?'All spaces':S.role+' space'}</div></div>
+  document.getElementById('topbar').innerHTML = `<div class="desktop-only"><div class="ttl">${esc(S.detail?titles[S.detail]||'Detail':titles[S.tab]||'')}</div><div class="sub">${esc(todayStr())} · ${S.role==='All'?'All spaces':esc(roleLabel(S.role))+' space'}</div></div>
     <div class="desktop-only" style="display:flex;align-items:center;gap:16px"><div style="text-align:right"><div class="temp mono" style="font-size:16px;color:var(--gold)">72°</div><div class="cond">Sunny</div></div></div>`;
 
   // main view
@@ -325,8 +365,11 @@ let deferredPrompt=null;
 window.addEventListener('beforeinstallprompt', e=>{ e.preventDefault(); deferredPrompt=e; });
 
 document.addEventListener('click', e=>{
-  const t=e.target.closest('[data-go],[data-role],[data-act],[data-detail],[data-task],[data-space],[data-confirm],[data-cancel],[data-suggest]');
+  const t=e.target.closest('[data-go],[data-role],[data-act],[data-detail],[data-task],[data-space-add],[data-space-edit],[data-space-del],[data-space],[data-confirm],[data-cancel],[data-suggest]');
   if(!t) return;
+  if('spaceAdd' in t.dataset){ addSpace(); return; }
+  if(t.dataset.spaceEdit){ editSpace(t.dataset.spaceEdit); return; }
+  if(t.dataset.spaceDel){ delSpace(t.dataset.spaceDel); return; }
   if(t.dataset.go){ S.tab=t.dataset.go; S.detail=null; render(); return; }
   if(t.dataset.role){ S.role=t.dataset.role; render(); return; }
   if(t.dataset.detail){ S.detail=t.dataset.detail; render(); return; }

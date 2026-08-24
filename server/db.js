@@ -66,6 +66,28 @@ db.exec(`
     sort INTEGER DEFAULT 0
   );
 
+  -- Every tool invocation, whoever asked for it. The spine of the observability view
+  -- (/api/turns) and the evidence trail for privileged actions. Written by
+  -- server/tools/index.js before the side effect and updated after, so a crash
+  -- mid-operation still leaves a record that it was attempted.
+  CREATE TABLE IF NOT EXISTS audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT DEFAULT (datetime('now')),
+    actor TEXT,                 -- 'user' | 'model' | 'system'
+    surface TEXT,               -- 'web' | 'watch' | 'mcp' | 'api'
+    conversation_id TEXT,
+    tool TEXT NOT NULL,
+    tier TEXT,                  -- 'read' | 'write' | 'privileged'
+    args_json TEXT,
+    result_summary TEXT,
+    ok INTEGER,                 -- NULL while in flight, 1 ok, 0 failed
+    confirmed INTEGER DEFAULT 0,-- did this cross a confirmation gate
+    latency_ms INTEGER,
+    error TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts DESC);
+  CREATE INDEX IF NOT EXISTS idx_audit_conv ON audit(conversation_id, id);
+
   -- Lightweight local notes (the Notes module).
   CREATE TABLE IF NOT EXISTS notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

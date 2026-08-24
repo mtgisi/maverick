@@ -94,6 +94,7 @@ app.use('/api/bookmarks', require('./routes/bookmarks'));
 app.use('/api/google', require('./routes/google'));
 app.use('/api/spaces', require('./routes/spaces'));
 app.use('/api/notes', require('./routes/notes'));
+app.use('/api/activity', require('./routes/activity'));
 app.get('/api/reminders', (req, res) =>
   res.json(db.prepare("SELECT id, text, fire_at, sent FROM reminders WHERE sent=0 ORDER BY fire_at ASC LIMIT 100").all()));
 

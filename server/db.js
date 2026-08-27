@@ -66,6 +66,25 @@ db.exec(`
     sort INTEGER DEFAULT 0
   );
 
+  -- Per-calendar role. Not every calendar you can see is a thing you have to do.
+  --
+  --   agenda    this calendar IS your day. Counts as an activity, feeds "what's on today".
+  --   reference readable when explicitly asked, never counted as an activity. Birthdays,
+  --             the kitchen menu, the office in/out board: useful to consult, not a to-do.
+  --   off       never fetched at all.
+  --
+  -- A row here is an explicit decision and OVERRIDES the kind heuristic in google/client.js.
+  -- Calendars with no row keep exactly the behaviour they had before this table existed, so
+  -- adding it changed nothing until something is deliberately set.
+  CREATE TABLE IF NOT EXISTS calendar_prefs (
+    account     TEXT NOT NULL,
+    calendar_id TEXT NOT NULL,
+    mode        TEXT NOT NULL DEFAULT 'agenda',
+    label       TEXT,                     -- cached summary, so settings renders while offline
+    updated_at  TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (account, calendar_id)
+  );
+
   -- Unified task mirror across charliework and goosework.
   --
   -- Mirrored rather than proxied so the merged list is fast, works when an origin is slow,

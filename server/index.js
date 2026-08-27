@@ -99,6 +99,7 @@ app.use('/api/chat', require('./routes/chat'));
 app.use('/api/memories', require('./routes/memories'));
 app.use('/api/timesheet', require('./routes/timesheet'));
 app.use('/api/calendar', require('./routes/calendar'));
+app.use('/api/calendars', require('./routes/calendars'));
 app.use('/api/mail', require('./routes/mail'));
 app.use('/api/tasks', require('./routes/tasks'));
 app.use('/api/bookmarks', require('./routes/bookmarks'));

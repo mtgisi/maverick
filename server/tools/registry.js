@@ -202,19 +202,39 @@ const TOOLS = [
     name: 'list_calendar_events',
     group: 'calendar',
     tier: 'read',
-    description: "Read Google Calendar events for a day. Scope controls which calendars: 'mine' (default — your own calendars plus events you're invited to), 'resource'/'work' (shared resource/room calendars), 'all'.",
+    description: "Read calendar events for a day. By default this returns only the user's ACTUAL commitments. Some calendars are marked reference, not activities: birthdays, the kitchen menu, an office who-is-in-and-out board. Those are excluded unless you ask for them with include='reference', which you should do when the question is about them (\"who is out today\", \"whose birthday is it\", \"what is for lunch\"). Never present reference entries as things the user has to do.",
     schema: { type: 'object', properties: {
       date: { type: 'string', description: 'YYYY-MM-DD (local). Omit for today.' },
       account: { type: 'string', description: 'Optional account label/email; omit for all.' },
-      scope: { type: 'string', enum: ['mine', 'resource', 'work', 'shared', 'all'], description: "Default 'mine'. Use 'resource' or 'work' for 'what's going on at work' / school resource calendars; 'all' for everything." },
+      include: {
+        type: 'string', enum: ['agenda', 'reference', 'all'],
+        description: "Default 'agenda' = real commitments only. Use 'reference' for birthdays, menus, in/out boards. Use 'all' only when the user genuinely wants both.",
+      },
+      scope: { type: 'string', enum: ['mine', 'resource', 'work', 'shared', 'all'], description: "Default 'mine'. Use 'resource' or 'work' for shared resource or room calendars; 'all' for everything." },
     } },
     handler: async (a) => {
-      const res = await gcal.listEvents({ account: a.account, date: a.date, scope: a.scope });
+      const include = ['agenda', 'reference', 'all'].includes(a.include) ? a.include : 'agenda';
+      const res = await gcal.listEvents({ account: a.account, date: a.date, scope: a.scope, include });
       if (!res.connected) return 'No Google account connected yet. Connect one in Settings.';
-      if (!res.events.length) return `No events for ${res.day} (scope: ${a.scope || 'mine'}).`;
-      return res.events
-        .map(e => e.error ? `(! ${e.error})` : `${e.time || 'all day'} · ${e.title}${e.location ? ' @ ' + e.location : ''} [${e.calendar}]`)
-        .join('\n');
+
+      if (!res.events.length) {
+        // Distinguish "nothing on" from "nothing on, but there IS reference material", so a
+        // question about a birthday or the menu is not answered with a flat no.
+        if (include === 'agenda') {
+          const ref = await gcal.listEvents({ account: a.account, date: a.date, scope: a.scope, include: 'reference' })
+            .catch(() => ({ events: [] }));
+          const n = (ref.events || []).filter(e => !e.error).length;
+          if (n) return `No commitments for ${res.day}. (${n} reference entr${n === 1 ? 'y' : 'ies'} exist on birthday/menu/in-out style calendars; call again with include='reference' if that is what was asked.)`;
+        }
+        return `No events for ${res.day}.`;
+      }
+
+      const line = e => e.error ? `(! ${e.error})`
+        : `${e.time || 'all day'} · ${e.title}${e.location ? ' @ ' + e.location : ''} [${e.calendar}${e.calendarMode === 'reference' ? ', reference only' : ''}]`;
+      const header = include === 'reference' ? 'REFERENCE entries (not commitments):\n'
+        : include === 'all' ? 'Commitments and reference entries (reference ones are marked):\n'
+        : '';
+      return header + res.events.map(line).join('\n');
     },
   },
 

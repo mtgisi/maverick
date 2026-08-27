@@ -87,6 +87,24 @@ button,input{font-family:inherit;color:inherit}
 .src-tag.personal{color:var(--sage);border-color:rgba(156,169,128,0.35);background:rgba(156,169,128,0.08)}
 .empty{color:var(--muted);padding:22px 4px;font-size:13.5px}
 
+/* ===== Calendars: which ones are your day ===== */
+.cal-intro{font-size:13px;color:var(--muted);line-height:1.55;margin:-4px 2px 16px}
+.cal-intro b{color:var(--ink-2);font-weight:600}
+.cal-list{display:flex;flex-direction:column;gap:8px}
+.cal-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:rgba(255,255,255,0.04);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+.cal-row.missing{opacity:0.6}
+.cal-name{flex:1 1 190px;min-width:0}
+.cal-name .n{font-size:14px;color:var(--ink);line-height:1.3;overflow-wrap:anywhere}
+.cal-name .m{font-family:var(--mono);font-size:10px;letter-spacing:0.06em;text-transform:uppercase;color:var(--dim);margin-top:3px}
+.cal-flag{font-family:var(--mono);font-size:9px;letter-spacing:0.08em;text-transform:uppercase;color:var(--gold-3);border:1px solid rgba(230,169,44,0.3);border-radius:5px;padding:1px 5px;margin-left:6px;vertical-align:middle}
+/* Segmented control: three exclusive roles, so it reads as one choice not three toggles. */
+.seg{display:flex;flex:0 0 auto;border:1px solid var(--line-2);border-radius:10px;overflow:hidden}
+.seg-btn{font-size:11.5px;font-weight:600;color:var(--muted);background:transparent;border:none;border-right:1px solid var(--line-2);padding:7px 11px;cursor:pointer;white-space:nowrap}
+.seg-btn:last-child{border-right:none}
+.seg-btn.on{background:var(--gold);color:#141109}
+.seg-btn.on[data-cal-mode="reference"]{background:var(--sage)}
+.seg-btn.on[data-cal-mode="off"]{background:rgba(255,255,255,0.16);color:var(--ink)}
+
 /* ===== Spaces ===== */
 .space{background:rgba(255,255,255,0.04);border:1px solid var(--line);border-radius:var(--r-card);padding:15px;cursor:pointer;border-top:3px solid var(--gold)}
 .space .sw{width:30px;height:30px;border-radius:9px;opacity:0.9;margin-bottom:12px}

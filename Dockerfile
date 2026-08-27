@@ -14,6 +14,10 @@ RUN npm install --omit=dev
 COPY server ./server
 COPY public ./public
 COPY mcp-config.json ./mcp-config.json
+# Tests ship in the image so they can be run where the app actually runs, against the real
+# module graph and the real better-sqlite3 build:
+#   docker exec maverick node /app/test/<name>.test.js
+COPY test ./test
 
 ENV NODE_ENV=production
 ENV HOME=/home/node

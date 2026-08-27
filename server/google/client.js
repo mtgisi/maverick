@@ -2,6 +2,7 @@
 const { google } = require('googleapis');
 const oauth = require('./oauth');
 const { TZ, workCalendars } = require('../config');
+const calPrefs = require('../services/calendars');
 
 function dayBounds(dateStr) {
   // dateStr = 'YYYY-MM-DD' in TZ, or undefined for today. Returns ISO timeMin/timeMax for that local day.
@@ -68,10 +69,24 @@ async function listCalendars({ account } = {}) {
 
 // List events across one or all connected accounts for a given local day.
 // When calendarId is omitted, enumerates every calendar on each account; otherwise queries just that one.
-async function listEvents({ account, date, calendarId, scope = 'mine' } = {}) {
+//
+// `include` selects which per-calendar roles are in play (see services/calendars.js):
+//   'agenda'    (default) only calendars that count as your day
+//   'reference' only the consult-on-request ones (birthdays, menus, who is in/out)
+//   'all'       both
+// Calendars set to 'off' are never fetched under any value.
+async function listEvents({ account, date, calendarId, scope = 'mine', include = 'agenda' } = {}) {
   const entries = account ? [oauth.clientFor(account)].filter(Boolean) : oauth.allClients();
   if (!entries.length) return { connected: false, events: [] };
   const { day, timeMin, timeMax } = dayBounds(date);
+  const prefs = calPrefs.map();
+
+  const roleAllows = mode => {
+    if (mode === 'off') return false;
+    if (include === 'all') return true;
+    if (include === 'reference') return mode === 'reference';
+    return mode === 'agenda';
+  };
 
   const MAX_TOTAL = 50;
   const PER_CAL = 25;
@@ -84,18 +99,33 @@ async function listEvents({ account, date, calendarId, scope = 'mine' } = {}) {
       const cal = google.calendar({ version: 'v3', auth: client });
       let cals;
       if (calendarId) {
-        cals = [{ id: calendarId, summary: calendarId, kind: 'owned' }];
+        cals = [{ id: calendarId, summary: calendarId, kind: 'owned', mode: 'agenda', explicit: true }];
       } else {
         const { data } = await cal.calendarList.list();
         cals = (data.items || [])
-          .map(c => ({ id: c.id, summary: c.summary || c.id, kind: calKind(c) }))
-          // 'mine' also peeks at shared calendars (for events you're invited to); resource is excluded unless asked.
-          .filter(c => scopeAllows(c.kind, scope) || (scope === 'mine' && c.kind === 'shared'))
+          .map(c => {
+            const k = calPrefs.key(acctName, c.id);
+            return {
+              id: c.id, summary: c.summary || c.id, kind: calKind(c),
+              mode: prefs.get(k) || calPrefs.DEFAULT_MODE,
+              explicit: prefs.has(k),
+            };
+          })
+          // Role first: an explicit decision outranks everything, including scope.
+          .filter(c => roleAllows(c.mode))
+          // Then the kind heuristic, but ONLY for calendars nobody has ruled on. Once you
+          // have said "this is my agenda", it should not then be dropped for being a shared
+          // calendar you are not an attendee of.
+          .filter(c => c.explicit
+            || scopeAllows(c.kind, scope)
+            || (scope === 'mine' && c.kind === 'shared'))
           .slice(0, MAX_CALS);
       }
       await Promise.all(cals.map(async (c) => {
         // On shared calendars under the default 'mine' scope, keep only events you're actually a part of.
-        const selfOnly = !calendarId && scope === 'mine' && c.kind === 'shared';
+        // Skipped when the calendar was explicitly set: a birthday or in/out board has no
+        // attendees, so self-filtering would empty it and make "who is out today" useless.
+        const selfOnly = !calendarId && !c.explicit && scope === 'mine' && c.kind === 'shared';
         try {
           const { data } = await cal.events.list({
             calendarId: c.id, timeMin, timeMax, singleEvents: true, orderBy: 'startTime', maxResults: PER_CAL,
@@ -107,16 +137,24 @@ async function listEvents({ account, date, calendarId, scope = 'mine' } = {}) {
               if (!mine) continue;
             }
             const startISO = ev.start && (ev.start.dateTime || ev.start.date);
+            // An all-day event carries a bare 'YYYY-MM-DD', which Date parses as UTC
+            // midnight, so formatting it in a negative-offset zone renders the evening
+            // BEFORE. Every birthday and menu entry was showing as "7:00 PM". All-day
+            // events have no clock time, so do not invent one.
+            const isAllDay = !!(ev.start && ev.start.date && !ev.start.dateTime);
             all.push({
               id: ev.id,
               account: acctName,
               calendar: c.summary,
               calendarKind: c.kind,
+              calendarMode: c.mode || 'agenda',
               title: ev.summary || '(no title)',
               location: ev.location || '',
               start: startISO,
-              allDay: !!(ev.start && ev.start.date && !ev.start.dateTime),
-              time: startISO ? new Date(startISO).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' }) : '',
+              allDay: isAllDay,
+              time: (!isAllDay && startISO)
+                ? new Date(startISO).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' })
+                : '',
               hangoutLink: ev.hangoutLink || '',
             });
           }
@@ -128,7 +166,33 @@ async function listEvents({ account, date, calendarId, scope = 'mine' } = {}) {
       all.push({ error: `calendar ${acctName}: ${e.message}` });
     }
   }));
+  // All-day entries sort first within a day: their bare date string compares below any
+  // same-day timestamp, which is what we want, but only because it has no time component.
   all.sort((a, b) => (a.start || '').localeCompare(b.start || ''));
+
+  // Collapse the same event seen through more than one account. A calendar subscribed on
+  // both the personal and the work account yields two copies of every event, which read as
+  // two commitments: "Help George T Gialamas" appeared twice in today's agenda.
+  //
+  // Deduped on the Google event id ONLY, never on title plus time. Two genuinely separate
+  // bookings can share a name and a slot (two swim practices in the same pool), and merging
+  // those would delete real information. Same id means the same underlying event, full stop.
+  const seenIds = new Map();
+  const deduped = [];
+  for (const e of all) {
+    if (e.error || !e.id) { deduped.push(e); continue; }
+    const prior = seenIds.get(e.id);
+    if (prior) {
+      // Keep a record of where else it was found rather than silently dropping the copy.
+      if (!prior.alsoOn) prior.alsoOn = [prior.account];
+      if (!prior.alsoOn.includes(e.account)) prior.alsoOn.push(e.account);
+      continue;
+    }
+    seenIds.set(e.id, e);
+    deduped.push(e);
+  }
+  all.length = 0;
+  all.push(...deduped);
   return { connected: true, day, events: all.slice(0, MAX_TOTAL) };
 }
 

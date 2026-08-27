@@ -72,6 +72,7 @@ const S = {
   drawer:false, conv:'web',
   // tasks (unified charliework + goosework mirror)
   taskSource:'All', taskCounts:null, taskSources:[], tasksUnsynced:0,
+  calendars:null,
   // voice
   convMode:false, dictating:false, voiceState:'idle', voiceError:'', streaming:'', tool:null,
 };
@@ -476,8 +477,68 @@ function chatView(){
   </div>`;
 }
 
+/* ---------- calendars: which ones are your day ---------- */
+const CAL_MODES = [
+  ['agenda','Agenda','Counts as your day'],
+  ['reference','Reference','Readable when asked, never an activity'],
+  ['off','Off','Never fetched'],
+];
+
+async function loadCalendars(){
+  try { S.calendars = await api('/calendars'); }
+  catch(_){ S.calendars = {error:'Could not load calendars.', calendars:[]}; }
+}
+
+async function setCalendarMode(account, id, mode, label){
+  const d = S.calendars; if(!d) return;
+  const cal = (d.calendars||[]).find(c=>c.account===account && c.id===id);
+  if(cal){ cal.mode=mode; cal.explicit=true; }        // optimistic; the list is re-read on failure
+  render();
+  try {
+    await api('/calendars',{method:'PATCH',body:JSON.stringify({account,calendar_id:id,mode,label})});
+  } catch(_){ await loadCalendars(); }
+  render();
+}
+
+function calendarsView(){
+  const d = S.calendars;
+  const back = `<div class="dhead"><button class="back" data-act="back">←</button>
+    <div><div class="sub">Settings</div><div class="ttl">Calendars</div></div></div>`;
+  if(!d) return back + `<div class="empty">Loading…</div>`;
+
+  const intro = `<p class="cal-intro">Not everything on a calendar is something you have to do.
+    Mark the ones that are your actual commitments as <b>Agenda</b>. Birthdays, menus and
+    who-is-in-and-out boards work better as <b>Reference</b>: ${esc(brand())} will read them when you
+    ask, but they never show up as your activities.</p>`;
+
+  const warn = d.error ? `<div class="pending" style="margin-bottom:14px"><div class="s">${esc(d.error)}${
+      d.connected===false?' Reconnect a Google account in Settings.':''
+    } Your settings below are saved and still editable.</div></div>` : '';
+
+  const groups = {};
+  for(const c of (d.calendars||[])) (groups[c.account]=groups[c.account]||[]).push(c);
+
+  const body = Object.keys(groups).length ? Object.entries(groups).map(([acct,cals])=>`
+    <div class="section-label">${esc(acct)}</div>
+    <div class="cal-list">${cals.map(c=>`
+      <div class="cal-row${c.missing?' missing':''}">
+        <div class="cal-name">
+          <div class="n">${esc(c.summary)}${c.primary?' <span class="cal-flag">primary</span>':''}</div>
+          <div class="m">${c.missing?'no longer on this account':esc(c.kind||'')}${c.explicit?'':' · default'}</div>
+        </div>
+        <div class="seg">${CAL_MODES.map(([m,label,tip])=>`
+          <button class="seg-btn${c.mode===m?' on':''}" title="${esc(tip)}"
+            data-cal-mode="${esc(m)}" data-cal-acct="${esc(c.account)}" data-cal-id="${esc(c.id)}"
+            data-cal-label="${esc(c.summary)}">${label}</button>`).join('')}</div>
+      </div>`).join('')}</div>`).join('')
+    : `<div class="empty">No calendars found${d.connected===false?' — connect a Google account first.':'.'}</div>`;
+
+  return back + intro + warn + body;
+}
+
 /* demo detail views (Aureo design, placeholder data) */
 function detailView(){
+  if(S.detail==='calendars') return calendarsView();
   const back = `<div class="dhead"><button class="back" data-act="back">←</button><div><div class="sub">Demo data</div><div class="ttl">${({nutrition:'Nutrition',sleep:'Sleep',finance:'Finance',workout:'Training',notes:'Notes',notifications:'Notifications'})[S.detail]||''}</div></div></div>`;
   if(S.detail==='notifications'){
     return back + (S.pending.length?`<div class="section-label" style="color:#cf9f5a">Needs you · ${S.pending.length}</div>
@@ -574,6 +635,7 @@ function drawerHTML(){
     ${acctRows}
     <a class="drawer-item" href="/connect/google?account=personal"><span class="sw" style="background:var(--gold)"></span><span class="l">Connect personal Gmail / Calendar</span><span class="r">→</span></a>
     <a class="drawer-item" href="/connect/google?account=work"><span class="sw" style="background:#6fa195"></span><span class="l">Connect work Gmail / Calendar</span><span class="r">→</span></a>
+    <div class="drawer-item" data-detail="calendars"><span class="sw" style="background:var(--sage)"></span><span class="l">Calendars</span><span class="r">→</span></div>
     <div class="g">Integrations</div>
     ${[['Timeclock',feat.timeclock],['Tasks (charliework)',feat.tasks],['Bookmarks',feat.bookmarks],['Containers',feat.containers]].map(([n,on])=>`<div class="drawer-item" style="cursor:default"><span class="sw" style="background:${on?'var(--sage)':'var(--dim)'}"></span><span class="l">${n}</span><span class="r">${on?'On':'Off'}</span></div>`).join('')}
     <div class="g">App</div>
@@ -590,14 +652,22 @@ let deferredPrompt=null;
 window.addEventListener('beforeinstallprompt', e=>{ e.preventDefault(); deferredPrompt=e; });
 
 document.addEventListener('click', e=>{
-  const t=e.target.closest('[data-go],[data-role],[data-act],[data-detail],[data-task],[data-space-add],[data-space-edit],[data-space-del],[data-space],[data-confirm],[data-cancel],[data-suggest]');
+  const t=e.target.closest('[data-go],[data-role],[data-act],[data-detail],[data-task],[data-tsrc],[data-cal-mode],[data-space-add],[data-space-edit],[data-space-del],[data-space],[data-confirm],[data-cancel],[data-suggest]');
   if(!t) return;
   if('spaceAdd' in t.dataset){ addSpace(); return; }
   if(t.dataset.spaceEdit){ editSpace(t.dataset.spaceEdit); return; }
   if(t.dataset.spaceDel){ delSpace(t.dataset.spaceDel); return; }
   if(t.dataset.go){ S.tab=t.dataset.go; S.detail=null; render(); return; }
   if(t.dataset.role){ S.role=t.dataset.role; render(); return; }
-  if(t.dataset.detail){ S.detail=t.dataset.detail; render(); return; }
+  if(t.dataset.calMode){
+    setCalendarMode(t.dataset.calAcct, t.dataset.calId, t.dataset.calMode, t.dataset.calLabel);
+    return;
+  }
+  if(t.dataset.detail){
+    S.detail=t.dataset.detail; S.drawer=false; render();
+    if(S.detail==='calendars') loadCalendars().then(render);
+    return;
+  }
   if(t.dataset.space){ S.role=t.dataset.space; S.tab='home'; S.detail=null; S.drawer=false; render(); return; }
   if(t.dataset.tsrc){ S.taskSource=t.dataset.tsrc; render(); return; }
   if(t.dataset.task){

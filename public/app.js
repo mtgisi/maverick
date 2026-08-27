@@ -493,7 +493,37 @@ function detailView(){
 const macros=()=>`<div class="section-label">Macros</div>${[['Protein','78 / 120g',65,'var(--gold)'],['Carbs','130 / 210g',62,'var(--sage)'],['Fat','41 / 70g',58,'#cf9f5a']].map(([n,v,w,c])=>`<div style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;font-size:13px;color:var(--ink-2);margin-bottom:6px"><span>${n}</span><span class="mono" style="color:var(--muted)">${v}</span></div><div class="bar" style="height:6px;margin:0"><span style="width:${w}%;background:${c}"></span></div></div>`).join('')}`;
 const bars7=()=>`<div style="display:flex;align-items:flex-end;gap:9px;height:110px">${[64,80,55,72,68,60,78].map((h,i)=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px"><span style="width:100%;height:${h}%;background:${i===6?'var(--gold)':'rgba(156,169,128,.5)'};border-radius:5px"></span><span style="font-size:10px;color:${i===6?'var(--gold)':'var(--faint)'}">${'WTFSSMT'[i]}</span></div>`).join('')}</div>`;
 
-function render(){
+/* render() reassigns innerHTML on four containers, so any element that had focus stops
+   existing and focus falls back to <body>. That is why the cursor was lost the moment a
+   reply finished: send() ends in render(), which rebuilds the composer out from under you.
+
+   Capture focus and caret before the rebuild, restore after. Doing it here rather than in
+   send() covers every render() call site, so a future one cannot reintroduce the same bug.
+
+   Only ever RESTORES focus, never grants it. If you tapped Send on a phone rather than
+   typing, focus was on the button, and forcing it into the input would pop the keyboard
+   open when you did not ask for it. */
+function withFocusPreserved(rebuild){
+  const el = document.activeElement;
+  const id = el && el.id;
+  const isField = el && (el.tagName==='INPUT' || el.tagName==='TEXTAREA');
+  const start = isField ? el.selectionStart : null;
+  const end   = isField ? el.selectionEnd   : null;
+
+  rebuild();
+
+  if(!id) return;
+  const next = document.getElementById(id);
+  if(!next || next===document.activeElement) return;
+  next.focus({preventScroll:true});
+  if(start!=null && typeof next.setSelectionRange==='function'){
+    try { next.setSelectionRange(start, end); } catch(_){}
+  }
+}
+
+function render(){ withFocusPreserved(renderAll); }
+
+function renderAll(){
   // sidebar (desktop)
   document.getElementById('sidebar').innerHTML = `
     <div class="brand"><span class="logo"></span><span class="n">${esc(brand())}</span></div>

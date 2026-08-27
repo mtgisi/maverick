@@ -22,8 +22,11 @@ const KEYWORDS = {
     'coming up', 'next up', 'later today', 'my day', 'on deck',
   ],
   mail: [
-    'email', 'e-mail', 'mail', 'draft', 'inbox', 'gmail', 'reply', 'send to', 'write to',
-    'message to', 'compose',
+    'email', 'e-mail', 'emails', 'mail', 'draft', 'inbox', 'gmail', 'reply', 'send to',
+    'write to', 'message to', 'compose',
+    // Reading and triage, not just composing.
+    'unread', 'from ', 'heard from', 'anything come in', 'catch me up', 'messages',
+    'attachment', 'sender', 'subject',
   ],
   timeclock: [
     'timeclock', 'timesheet', 'clock in', 'clock out', 'clocked', 'clock-in', 'clock-out',
@@ -150,6 +153,7 @@ const PRIMARY_READ = {
   tasks: 'list_tasks',
   timeclock: 'get_timesheet',
   workspace: 'list_drive_files',
+  mail: 'inbox_summary',
 };
 
 module.exports = { select, toOllama, KEYWORDS, DATA_GROUPS, PRIMARY_READ, forget, carried };

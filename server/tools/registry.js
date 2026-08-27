@@ -21,6 +21,7 @@ const { TZ } = require('../config');
 const timeclock = require('../integrations/timeclock');
 const charliework = require('../integrations/charliework');
 const tasks = require('../services/tasks');
+const cfg = require('../config');
 const bookmarks = require('../integrations/bookmarks');
 const containers = require('../integrations/containers');
 const gcal = require('../google/client');
@@ -202,9 +203,13 @@ const TOOLS = [
     name: 'list_calendar_events',
     group: 'calendar',
     tier: 'read',
-    description: "Read calendar events for a day. By default this returns only the user's ACTUAL commitments. Some calendars are marked reference, not activities: birthdays, the kitchen menu, an office who-is-in-and-out board. Those are excluded unless you ask for them with include='reference', which you should do when the question is about them (\"who is out today\", \"whose birthday is it\", \"what is for lunch\"). Never present reference entries as things the user has to do.",
+    description: "Read calendar events for a day.\n\nIf the question names a PLACE, ROOM, BUILDING or a specific calendar (the Wilke, the pool, the Krantz Center, the auditorium, room 218, the esports arena, the lunch menu, the in/out board), pass that name as `calendar`. That searches THAT calendar regardless of its role, which is the only way to answer questions about rooms and locations.\n\nOtherwise this returns only the user's own commitments. Calendars marked reference are excluded: birthdays, menus, who-is-in-and-out. Ask for those with include='reference'. Never present a reference entry, a room booking or someone else's event as something the user has to do.",
     schema: { type: 'object', properties: {
       date: { type: 'string', description: 'YYYY-MM-DD (local). Omit for today.' },
+      calendar: {
+        type: 'string',
+        description: 'Name (or part of a name) of a specific calendar, room or location to look at, e.g. "wilke", "pool", "krantz", "room 218", "lunch menu". Case-insensitive substring match. Use this whenever the question is about a place rather than about the user.',
+      },
       account: { type: 'string', description: 'Optional account label/email; omit for all.' },
       include: {
         type: 'string', enum: ['agenda', 'reference', 'all'],
@@ -212,12 +217,35 @@ const TOOLS = [
       },
       scope: { type: 'string', enum: ['mine', 'resource', 'work', 'shared', 'all'], description: "Default 'mine'. Use 'resource' or 'work' for shared resource or room calendars; 'all' for everything." },
     } },
-    handler: async (a) => {
+    handler: async (a, ctx = {}) => {
       const include = ['agenda', 'reference', 'all'].includes(a.include) ? a.include : 'agenda';
-      const res = await gcal.listEvents({ account: a.account, date: a.date, scope: a.scope, include });
+      // The user named a place and the model did not pass it through. Node already resolved
+      // it against the real calendar list, so use that rather than answering the wrong
+      // question. An explicit argument always wins.
+      const calendar = a.calendar || ctx.calendarHint || undefined;
+      const res = await gcal.listEvents({
+        account: a.account, date: a.date, scope: a.scope, include, calendar,
+      });
       if (!res.connected) return 'No Google account connected yet. Connect one in Settings.';
 
+      // A name that matched nothing must not read as "that place has no events". Offer the
+      // closest names so the retry can succeed instead of guessing again.
+      if (res.noMatch) {
+        const q = String(calendar).toLowerCase();
+        const words = q.split(/\s+/).filter(w => w.length > 2);
+        const near = (res.availableCalendars || [])
+          .filter(n => words.some(w => n.toLowerCase().includes(w)))
+          .slice(0, 12);
+        return `error: no calendar matching "${calendar}". `
+          + (near.length
+            ? `Did you mean one of: ${near.join(' | ')}?`
+            : `Call list_calendars to see the available names.`);
+      }
+
       if (!res.events.length) {
+        if (calendar) {
+          return `Nothing booked on ${res.matchedCalendars.join(' + ')} for ${res.day}.`;
+        }
         // Distinguish "nothing on" from "nothing on, but there IS reference material", so a
         // question about a birthday or the menu is not answered with a flat no.
         if (include === 'agenda') {
@@ -230,8 +258,10 @@ const TOOLS = [
       }
 
       const line = e => e.error ? `(! ${e.error})`
-        : `${e.time || 'all day'} · ${e.title}${e.location ? ' @ ' + e.location : ''} [${e.calendar}${e.calendarMode === 'reference' ? ', reference only' : ''}]`;
-      const header = include === 'reference' ? 'REFERENCE entries (not commitments):\n'
+        : `${e.time || 'all day'} · ${e.title}${e.location ? ' @ ' + e.location : ''} [${e.calendar}${!a.calendar && e.calendarMode === 'reference' ? ', reference only' : ''}]`;
+      const header = calendar
+        ? `Bookings on ${res.matchedCalendars.join(' + ')} for ${res.day}. These are that calendar's events, NOT the user's own commitments:\n`
+        : include === 'reference' ? 'REFERENCE entries (not commitments):\n'
         : include === 'all' ? 'Commitments and reference entries (reference ones are marked):\n'
         : '';
       return header + res.events.map(line).join('\n');
@@ -254,6 +284,74 @@ const TOOLS = [
         ? 'No Google account connected to draft from.'
         : `error: ${res.error}`;
       return `Draft created in ${res.account} (id ${res.draftId}). It is NOT sent — review and send it yourself.`;
+    },
+  },
+
+  {
+    name: 'search_mail',
+    group: 'mail',
+    tier: 'read',
+    description: 'Search email across connected accounts and return matching messages with sender, subject, date and a snippet. `query` is Gmail search syntax, so use it: from:pam, subject:budget, is:unread, has:attachment, newer_than:3d, after:2026/08/01. Combine terms. Returns ids you can pass to read_email for the full text.',
+    schema: { type: 'object', properties: {
+      query: { type: 'string', description: 'Gmail search query, e.g. "from:district newer_than:7d". Omit for the inbox.' },
+      account: { type: 'string', description: "Optional: 'personal' | 'work' | an email. Omit for both." },
+      max: { type: 'number', description: 'How many to return. Default 10, cap 25.' },
+    } },
+    handler: async (a) => {
+      if (!cfg.mailRead) return 'Reading mail is turned off. Only drafting is enabled.';
+      const res = await gcal.searchMail({ account: a.account, query: a.query, max: a.max });
+      if (!res.connected) return 'No Google account connected yet. Connect one in Settings.';
+      const msgs = (res.messages || []).filter(m => !m.error);
+      const errs = (res.messages || []).filter(m => m.error);
+      if (!msgs.length) {
+        return `TOTAL: 0 messages match "${res.query}".`
+          + (errs.length ? `\n(${errs.map(e => e.error).join('; ')})` : '');
+      }
+      const header = `TOTAL: ${msgs.length} message${msgs.length === 1 ? '' : 's'} matching "${res.query}"`
+        + `, ${msgs.filter(m => m.unread).length} unread:`;
+      const lines = msgs.map(m =>
+        `- ${m.unread ? '[UNREAD] ' : ''}${m.from} — ${m.subject} (${m.date})\n    ${m.snippet.slice(0, 160)}\n    id=${m.id} [${m.account}]`);
+      return [header, ...lines, ...errs.map(e => `(! ${e.error})`)].join('\n');
+    },
+  },
+  {
+    name: 'read_email',
+    group: 'mail',
+    tier: 'read',
+    description: 'Read the full text of one email. Get the id from search_mail first; never invent an id.',
+    schema: { type: 'object', properties: {
+      id: { type: 'string', description: 'Message id exactly as printed by search_mail.' },
+      account: { type: 'string' },
+    }, required: ['id'] },
+    handler: async (a) => {
+      if (!cfg.mailRead) return 'Reading mail is turned off. Only drafting is enabled.';
+      const res = await gcal.readEmail({ account: a.account, id: a.id });
+      if (!res.connected) return 'No Google account connected yet.';
+      if (!res.found) return `error: no message with id "${a.id}". Call search_mail and use an id exactly as printed.`;
+      return `From: ${res.from}\nTo: ${res.to}\nDate: ${res.date}\nSubject: ${res.subject}\n\n${res.body || '(no readable text body)'}`;
+    },
+  },
+  {
+    name: 'inbox_summary',
+    group: 'mail',
+    tier: 'read',
+    description: 'Overview of recent inbox mail: how many arrived, how many unread, and who sent most. Use for "anything important come in", "catch me up on email", "what did I get today".',
+    schema: { type: 'object', properties: {
+      hours: { type: 'number', description: 'Look back this many hours. Default 24.' },
+      account: { type: 'string' },
+    } },
+    handler: async (a) => {
+      if (!cfg.mailRead) return 'Reading mail is turned off. Only drafting is enabled.';
+      const res = await gcal.inboxSummary({ account: a.account, hours: a.hours });
+      if (!res.connected) return 'No Google account connected yet. Connect one in Settings.';
+      if (!res.total) return `TOTAL: 0 messages in the last ${res.hours} hours.`;
+      const head = `TOTAL: ${res.total} message${res.total === 1 ? '' : 's'} in the last ${res.hours} hours, ${res.unread} unread.`;
+      const who = res.top_senders.length
+        ? `Most from: ${res.top_senders.map(s => `${s.name} (${s.count})`).join(', ')}.` : '';
+      const lines = res.messages.slice(0, 10).map(m =>
+        `- ${m.unread ? '[UNREAD] ' : ''}${m.from} — ${m.subject}  id=${m.id}`);
+      const more = res.messages.length > 10 ? `(${res.messages.length - 10} more; use search_mail to narrow)` : '';
+      return [head, who, ...lines, more].filter(Boolean).join('\n');
     },
   },
 

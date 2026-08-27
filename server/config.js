@@ -98,6 +98,11 @@ module.exports = {
     get enabled() { return String(process.env.TTS_ENABLED || 'true').toLowerCase() === 'true' && !!this.url; },
   },
 
+  // Reading mail is the single largest expansion of what maverick can see, so it is an
+  // explicit choice rather than a default. The gmail.readonly scope is already granted on
+  // both connected accounts; this flag decides whether the code uses it.
+  mailRead: String(process.env.MAIL_READ_ENABLED || '').toLowerCase() === 'true',
+
   dockerTool: String(process.env.ENABLE_DOCKER_TOOL || '').toLowerCase() === 'true',
   deviceToken: process.env.DEVICE_TOKEN || '',
   whisperUrl: process.env.WHISPER_URL || 'http://maverick-whisper:9000',

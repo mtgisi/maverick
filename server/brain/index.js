@@ -25,6 +25,7 @@ const context = require('./context');
 const prompt = require('./prompt');
 const time = require('./time');
 const { dispatch } = require('../tools');
+const calPrefs = require('../services/calendars');
 const { brain, TZ } = require('../config');
 
 const MAX_IDENTICAL = 3;
@@ -57,7 +58,23 @@ async function run(conversationId, message, opts = {}) {
   const deadline = started + brain.turnTimeoutMs;
 
   const hits = time.resolve(message, { timeZone: TZ });
-  const systemPrompt = prompt.build({ resolvedTimes: time.promptBlock(hits), voice });
+
+  // Resolve a named place to a calendar here, not in the model. Same reasoning as the time
+  // resolver: told about a `calendar` argument, qwen2.5:7b called the wrong tool and then
+  // answered about the user's own day labelled "at Wilke".
+  let calendarHits = [];
+  try { calendarHits = await calPrefs.resolveFromMessage(message); } catch (_) {}
+  const calendarHint = calendarHits.length ? calendarHits[0].token : null;
+
+  const systemPrompt = prompt.build({
+    resolvedTimes: time.promptBlock(hits),
+    resolvedCalendars: calendarHits.length
+      ? `Named calendars in this request: ${calendarHits.map(h => `"${h.token}" = ${h.cal.summary}`).join('; ')}. `
+        + `The user is asking about that place, not about their own schedule. Call `
+        + `list_calendar_events with calendar:"${calendarHint}".`
+      : '',
+    voice,
+  });
 
   const messages = context.assemble({ conversationId, systemPrompt, userMessage: message });
   context.append(conversationId, { role: 'user', content: message });
@@ -127,7 +144,7 @@ async function run(conversationId, message, opts = {}) {
             if (emit) emit({ type: 'tool_start', tool: name });
             const out = await dispatch(name, {}, {
               conversationId, actor: 'system', surface, now: new Date(), tz: TZ,
-              resolvedTimes: hits,
+              resolvedTimes: hits, calendarHint,
             });
             const res = context.truncateToolResult(out.result);
             toolsUsed.push({ tool: name, ok: out.ok, forced: true });
@@ -186,7 +203,7 @@ async function run(conversationId, message, opts = {}) {
         if (emit) emit({ type: 'tool_start', tool: name });
         const out = await dispatch(name, argsObject(call.function.arguments), {
           conversationId, actor: 'model', surface, now: new Date(), tz: TZ,
-          resolvedTimes: hits,
+          resolvedTimes: hits, calendarHint,
         });
         result = context.truncateToolResult(out.result);
         toolsUsed.push({ tool: name, ok: out.ok });

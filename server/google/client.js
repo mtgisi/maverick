@@ -75,18 +75,28 @@ async function listCalendars({ account } = {}) {
 //   'reference' only the consult-on-request ones (birthdays, menus, who is in/out)
 //   'all'       both
 // Calendars set to 'off' are never fetched under any value.
-async function listEvents({ account, date, calendarId, scope = 'mine', include = 'agenda' } = {}) {
+async function listEvents({ account, date, calendarId, calendar, scope = 'mine', include = 'agenda' } = {}) {
   const entries = account ? [oauth.clientFor(account)].filter(Boolean) : oauth.allClients();
   if (!entries.length) return { connected: false, events: [] };
   const { day, timeMin, timeMax } = dayBounds(date);
   const prefs = calPrefs.map();
 
+  // A calendar asked for BY NAME is an explicit request, so its role no longer filters it.
+  // Most rooms and boards are marked reference precisely so they stay out of the agenda;
+  // that must not also make "what is going on in the Wilke today" unanswerable. `off` still
+  // means off, since that is the one setting that says "never fetch this".
+  const named = String(calendar || '').trim().toLowerCase();
+
   const roleAllows = mode => {
     if (mode === 'off') return false;
+    if (named) return true;
     if (include === 'all') return true;
     if (include === 'reference') return mode === 'reference';
     return mode === 'agenda';
   };
+
+  const matchedNames = [];
+  const allNames = [];
 
   const MAX_TOTAL = 50;
   const PER_CAL = 25;
@@ -111,21 +121,28 @@ async function listEvents({ account, date, calendarId, scope = 'mine', include =
               explicit: prefs.has(k),
             };
           })
+          .filter(c => { allNames.push(c.summary); return true; })
           // Role first: an explicit decision outranks everything, including scope.
           .filter(c => roleAllows(c.mode))
-          // Then the kind heuristic, but ONLY for calendars nobody has ruled on. Once you
-          // have said "this is my agenda", it should not then be dropped for being a shared
-          // calendar you are not an attendee of.
-          .filter(c => c.explicit
-            || scopeAllows(c.kind, scope)
-            || (scope === 'mine' && c.kind === 'shared'))
+          // A name match replaces the scope/kind heuristics entirely: you asked for this
+          // calendar, so nothing else gets to veto it.
+          .filter(c => {
+            if (!named) {
+              return c.explicit
+                || scopeAllows(c.kind, scope)
+                || (scope === 'mine' && c.kind === 'shared');
+            }
+            const hit = c.summary.toLowerCase().includes(named);
+            if (hit) matchedNames.push(c.summary);
+            return hit;
+          })
           .slice(0, MAX_CALS);
       }
       await Promise.all(cals.map(async (c) => {
         // On shared calendars under the default 'mine' scope, keep only events you're actually a part of.
-        // Skipped when the calendar was explicitly set: a birthday or in/out board has no
-        // attendees, so self-filtering would empty it and make "who is out today" useless.
-        const selfOnly = !calendarId && !c.explicit && scope === 'mine' && c.kind === 'shared';
+        // Skipped when the calendar was explicitly set or asked for by name: a birthday
+        // board or a room booking has no attendees, so self-filtering would empty it.
+        const selfOnly = !calendarId && !named && !c.explicit && scope === 'mine' && c.kind === 'shared';
         try {
           const { data } = await cal.events.list({
             calendarId: c.id, timeMin, timeMax, singleEvents: true, orderBy: 'startTime', maxResults: PER_CAL,
@@ -197,7 +214,143 @@ async function listEvents({ account, date, calendarId, scope = 'mine', include =
   }
   all.length = 0;
   all.push(...deduped);
-  return { connected: true, day, events: all.slice(0, MAX_TOTAL) };
+  // Report what a name actually resolved to. Without this a typo silently returns nothing
+  // and the model presents "no events" as fact rather than "I could not find that calendar".
+  const result = { connected: true, day, events: all.slice(0, MAX_TOTAL) };
+  if (named) {
+    result.matchedCalendars = [...new Set(matchedNames)];
+    if (!result.matchedCalendars.length) {
+      result.noMatch = true;
+      result.availableCalendars = [...new Set(allNames)];
+    }
+  }
+  return result;
+}
+
+// ---- Gmail read -------------------------------------------------------------------------
+//
+// gmail.readonly is already granted on both connected accounts; it simply was not used.
+// Read only: nothing here mutates a mailbox, and messages.send is never called anywhere in
+// this file. Gated by cfg.mailRead so the capability is an explicit choice, not a default.
+
+const HEADER = (headers, name) =>
+  ((headers || []).find(h => h.name.toLowerCase() === name.toLowerCase()) || {}).value || '';
+
+// Walk the MIME tree for readable text. Prefers text/plain; falls back to stripped HTML.
+function extractBody(payload) {
+  if (!payload) return '';
+  const decode = d => { try { return Buffer.from(d, 'base64').toString('utf8'); } catch (_) { return ''; } };
+
+  const walk = (part, wantHtml) => {
+    if (!part) return '';
+    const mime = part.mimeType || '';
+    if (mime === (wantHtml ? 'text/html' : 'text/plain') && part.body && part.body.data) {
+      return decode(part.body.data);
+    }
+    for (const child of (part.parts || [])) {
+      const found = walk(child, wantHtml);
+      if (found) return found;
+    }
+    return '';
+  };
+
+  const plain = walk(payload, false);
+  if (plain) return plain;
+  const html = walk(payload, true);
+  return html
+    ? html.replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim()
+    : '';
+}
+
+// Search mail across connected accounts. `query` is Gmail search syntax, passed through, so
+// "from:pam after:2026/08/01 has:attachment" works as written rather than being guessed at.
+async function searchMail({ account, query, max = 10 } = {}) {
+  const entries = account ? [oauth.clientFor(account)].filter(Boolean) : oauth.allClients();
+  if (!entries.length) return { connected: false, messages: [] };
+  const limit = Math.min(Math.max(Number(max) || 10, 1), 25);
+
+  const out = [];
+  await Promise.all(entries.map(async ({ client, account: acct }) => {
+    const acctName = acct.label || acct.email;
+    try {
+      const gmail = google.gmail({ version: 'v1', auth: client });
+      const { data } = await gmail.users.messages.list({
+        userId: 'me', q: query || 'in:inbox', maxResults: limit,
+      });
+      const ids = (data.messages || []).map(m => m.id);
+      // Gmail's batch endpoints 403 for this token type, so fetch individually. Metadata
+      // format keeps each response small; full bodies are only pulled by read_email.
+      const msgs = await Promise.all(ids.map(async id => {
+        try {
+          const { data: full } = await gmail.users.messages.get({
+            userId: 'me', id, format: 'metadata',
+            metadataHeaders: ['From', 'To', 'Subject', 'Date'],
+          });
+          const h = (full.payload && full.payload.headers) || [];
+          return {
+            id, threadId: full.threadId, account: acctName,
+            from: HEADER(h, 'From'), to: HEADER(h, 'To'),
+            subject: HEADER(h, 'Subject') || '(no subject)',
+            date: HEADER(h, 'Date'),
+            snippet: (full.snippet || '').trim(),
+            unread: (full.labelIds || []).includes('UNREAD'),
+          };
+        } catch (_) { return null; }
+      }));
+      out.push(...msgs.filter(Boolean));
+    } catch (e) {
+      out.push({ error: `mail ${acctName}: ${e.message}` });
+    }
+  }));
+  return { connected: true, query: query || 'in:inbox', messages: out };
+}
+
+// Full text of one message. Body is capped by the caller's tool-result budget.
+async function readEmail({ account, id } = {}) {
+  const entries = account ? [oauth.clientFor(account)].filter(Boolean) : oauth.allClients();
+  if (!entries.length) return { connected: false };
+  for (const { client, account: acct } of entries) {
+    try {
+      const gmail = google.gmail({ version: 'v1', auth: client });
+      const { data } = await gmail.users.messages.get({ userId: 'me', id, format: 'full' });
+      const h = (data.payload && data.payload.headers) || [];
+      return {
+        connected: true, found: true, id, account: acct.label || acct.email,
+        from: HEADER(h, 'From'), to: HEADER(h, 'To'), cc: HEADER(h, 'Cc'),
+        subject: HEADER(h, 'Subject') || '(no subject)', date: HEADER(h, 'Date'),
+        body: extractBody(data.payload).trim(),
+      };
+    } catch (_) {
+      // Wrong account for this id; try the next one before giving up.
+    }
+  }
+  return { connected: true, found: false };
+}
+
+// A count-first overview, the same shape the task tool uses: a small model should be told
+// the totals rather than made to derive them from a list.
+async function inboxSummary({ account, hours = 24 } = {}) {
+  const h = Math.min(Math.max(Number(hours) || 24, 1), 24 * 14);
+  const days = Math.max(1, Math.ceil(h / 24));
+  const res = await searchMail({ account, query: `in:inbox newer_than:${days}d`, max: 25 });
+  if (!res.connected) return { connected: false };
+  const msgs = (res.messages || []).filter(m => !m.error);
+  const senders = {};
+  for (const m of msgs) {
+    const name = (m.from.match(/^\s*"?([^"<]+?)"?\s*</) || [])[1] || m.from;
+    senders[name.trim()] = (senders[name.trim()] || 0) + 1;
+  }
+  return {
+    connected: true, hours: h,
+    total: msgs.length,
+    unread: msgs.filter(m => m.unread).length,
+    top_senders: Object.entries(senders).sort((a, b) => b[1] - a[1]).slice(0, 5)
+      .map(([name, n]) => ({ name, count: n })),
+    messages: msgs,
+    errors: (res.messages || []).filter(m => m.error).map(m => m.error),
+  };
 }
 
 // Create a Gmail DRAFT (never sends). Returns the draft id.
@@ -241,4 +394,4 @@ async function listDrafts({ account, max = 20 } = {}) {
   return { connected: true, drafts: out };
 }
 
-module.exports = { listCalendars, listEvents, createDraft, listDrafts };
+module.exports = { listCalendars, listEvents, createDraft, listDrafts, searchMail, readEmail, inboxSummary };

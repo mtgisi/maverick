@@ -26,7 +26,7 @@ function spacesLine() {
 
 // opts.resolvedTimes: the block from brain/time.js promptBlock(), or ''.
 // opts.voice: true when the reply will be spoken aloud, which changes the formatting rule.
-function build({ resolvedTimes = '', voice = false } = {}) {
+function build({ resolvedTimes = '', resolvedCalendars = '', voice = false } = {}) {
   const now = new Date();
   const nowLocal = now.toLocaleString('en-US', {
     timeZone: TZ, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
@@ -42,6 +42,7 @@ function build({ resolvedTimes = '', voice = false } = {}) {
 
     `Current time: ${nowLocal} (${TZ}). Now in ISO-8601 UTC: ${now.toISOString()}.`,
     resolvedTimes,
+    resolvedCalendars,
 
     // Formatting sits BEFORE the rules, not after. An earlier revision put an emphatic
     // OUTPUT FORMAT block last, on the theory that a 7B weights the end most heavily. It

@@ -22,11 +22,14 @@ const KEYWORDS = {
     'coming up', 'next up', 'later today', 'my day', 'on deck',
   ],
   mail: [
-    'email', 'e-mail', 'emails', 'mail', 'draft', 'inbox', 'gmail', 'reply', 'send to',
-    'write to', 'message to', 'compose',
-    // Reading and triage, not just composing.
-    'unread', 'from ', 'heard from', 'anything come in', 'catch me up', 'messages',
-    'attachment', 'sender', 'subject',
+    // Keywords must be specific to mail. Bare 'reply', 'from', 'messages', 'sender' and
+    // 'subject' were all here and are far too general: "reply with just the word ok"
+    // matched on 'reply', which made the loop treat a trivial request as a mail question,
+    // discard a correct answer, and force-fetch the inbox.
+    'email', 'e-mail', 'emails', 'inbox', 'gmail', 'unread',
+    'my mail', 'the mail', 'check mail', 'draft an', 'draft a', 'reply to', 'reply back',
+    'send to', 'write to', 'message to', 'compose', 'heard from', 'hear from', 'catch me up',
+    'anything come in', 'attachment',
   ],
   timeclock: [
     'timeclock', 'timesheet', 'clock in', 'clock out', 'clocked', 'clock-in', 'clock-out',

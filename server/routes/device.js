@@ -84,4 +84,86 @@ router.post('/transcribe', express.raw({ type: 'application/octet-stream', limit
   }
 });
 
+// POST /api/device/chat/stream { message, conversation_id? }
+//
+// Server-Sent Events for desktop clients — Work Cockpit's overlay is the first.
+// Same auth and same event vocabulary as /api/chat (token | tool_start | tool_end |
+// done | error), so one client parser covers both surfaces.
+//
+// The watch keeps using the blocking /api/device/chat above: teaching the Zepp OS
+// httpRequest relay to speak SSE is not worth it and a watch reply is short
+// (LOCAL-BRAIN-SPEC 9). A desktop turn is not short — measured 12s off-LAN — which
+// is exactly why this exists.
+//
+// Falls back to a single `done` event when the brain cannot stream, so the client
+// never needs a second code path.
+router.post('/chat/stream', async (req, res) => {
+  const message = (req.body && req.body.message || '').trim();
+  if (!message) return res.status(400).json({ error: 'empty_message' });
+  const conv = (req.body && req.body.conversation_id) || 'desktop';
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',   // stop any proxy buffering the stream into one lump
+  });
+  const send = obj => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+
+  // Listen on `res`, not `req`. On a POST, req 'close' fires as soon as the request
+  // BODY has arrived, which is immediately, and aborting on it kills every turn before
+  // the first token. Same trap as routes/chat.js.
+  const ac = new AbortController();
+  res.on('close', () => { if (!res.writableEnded) ac.abort(); });
+
+  try {
+    const { reply, stopped, toolsUsed, latency_ms } = await assistant.run(conv, message, {
+      voice: false, surface: 'desktop',
+      stream: assistant.supportsStreaming(), signal: ac.signal,
+      emit: ev => send(ev),
+    });
+    if (!res.writableEnded) {
+      send({ type: 'done', reply, stopped, toolsUsed, latency_ms });
+      res.end();
+    }
+  } catch (e) {
+    console.error('[device/chat/stream]', e.message);
+    if (!res.writableEnded) {
+      const code = e.code === 'brain_offline' ? 'brain_offline'
+                 : e.code === 'queue_full' ? 'busy' : 'chat_failed';
+      send({ type: 'error', error: code, message: e.message });
+      res.end();
+    }
+  }
+});
+
+// POST /api/device/stt -> { transcript, ms }
+//
+// Transcribe only, no brain. The overlay's push-to-talk needs the transcript back
+// fast so it can show what was heard, then stream the reply separately through
+// /chat/stream. /api/device/transcribe still does both in one blocking call for the
+// watch, which has no use for the split.
+router.post('/stt', express.raw({ type: 'application/octet-stream', limit: '25mb' }), async (req, res) => {
+  let buf = null, ext = 'webm';
+  if (Buffer.isBuffer(req.body) && req.body.length) {
+    buf = req.body;
+  } else if (req.body && req.body.audio_b64) {
+    try { buf = Buffer.from(req.body.audio_b64, 'base64'); } catch (e) {}
+  }
+  // MediaRecorder in Electron produces webm/opus. Whisper is called with encode=true,
+  // so ffmpeg decodes whatever container arrives and the extension is only a hint.
+  const hinted = (req.get('X-Audio-Ext') || (req.body && req.body.ext) || '').replace(/[^a-z0-9]/gi, '');
+  if (hinted) ext = hinted;
+
+  if (!buf || !buf.length) return res.status(400).json({ error: 'no_audio' });
+  try {
+    const { text, ms } = await transcribe(buf, ext);
+    console.log(`[device/stt] ${ms}ms ${buf.length}B "${text.slice(0, 60)}"`);
+    res.json({ transcript: text, ms });
+  } catch (e) {
+    console.error('[device/stt]', e.message);
+    res.status(502).json({ error: 'stt_failed' });
+  }
+});
+
 module.exports = router;

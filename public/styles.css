@@ -135,6 +135,19 @@ button,input{font-family:inherit;color:inherit}
 .mic.live{background:var(--gold);animation:pulse 1.2s infinite}
 .bar-chat input{flex:1;background:transparent;border:none;outline:none;color:var(--ink);font-size:14px}
 .send{width:34px;height:34px;flex:0 0 34px;border-radius:50%;background:var(--gold);display:flex;align-items:center;justify-content:center;color:#141109;font-size:16px;font-weight:800;cursor:pointer;border:none}
+.mic{touch-action:none;-webkit-user-select:none;user-select:none}  /* hold-to-talk must not drag-scroll or select */
+
+/* Conversation mode: distinct from push-to-talk, and unmistakably on or off. */
+.conv-btn{width:34px;height:34px;flex:0 0 34px;border-radius:50%;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;cursor:pointer;border:none;transition:background .15s}
+.conv-btn.on{background:var(--sage);animation:pulse-sage 1.6s infinite}
+.conv-btn.on svg{stroke:#141109}
+
+/* Voice status line. Sits above the composer so it never reflows the input. */
+.voice-row{display:flex;align-items:center;gap:9px;min-height:17px;padding:0 6px 5px}
+.voice-badge{font-family:var(--mono);font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--sage);display:flex;align-items:center;gap:6px}
+.voice-badge.live::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--sage);box-shadow:0 0 8px var(--sage);animation:blink 1s infinite}
+.voice-badge.err{color:#cf8a6a}
+.tool-hint{font-size:11.5px;color:var(--faint);font-style:italic}
 
 /* ===== Settings drawer ===== */
 .drawer-scrim{position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:80}
@@ -187,6 +200,7 @@ button,input{font-family:inherit;color:inherit}
 
 /* ===== Animations ===== */
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(230,169,44,.5)}70%{box-shadow:0 0 0 12px rgba(230,169,44,0)}100%{box-shadow:0 0 0 0 rgba(230,169,44,0)}}
+@keyframes pulse-sage{0%{box-shadow:0 0 0 0 rgba(156,169,128,.55)}70%{box-shadow:0 0 0 11px rgba(156,169,128,0)}100%{box-shadow:0 0 0 0 rgba(156,169,128,0)}}
 @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 @keyframes blink{0%,100%{opacity:.3}50%{opacity:1}}
 @keyframes drawerIn{from{transform:translateX(100%)}to{transform:translateX(0)}}

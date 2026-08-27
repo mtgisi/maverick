@@ -45,6 +45,43 @@ module.exports = {
     token: process.env.CHARLIEWORK_API_TOKEN || '',
     get enabled() { return !!(this.url && this.token); },
   },
+  // --- local brain (ollama on goose-desktop, RTX 3070) ---
+  // BRAIN_BACKEND is the rollback lever for the soak window and nothing else: 'local' runs
+  // the agent loop against ollama, 'claude' falls back to the Claude Code CLI. Do not build
+  // features on it and do not let it become a hybrid by accident (LOCAL-BRAIN-SPEC 12.1).
+  brain: {
+    backend: (process.env.BRAIN_BACKEND || 'local').toLowerCase(),
+    url: process.env.OLLAMA_URL || 'http://192.168.68.76:11434',
+    model: process.env.OLLAMA_MODEL || 'qwen2.5:7b',
+    numCtx: Number(process.env.OLLAMA_NUM_CTX || 8192),
+    temperature: Number(process.env.OLLAMA_TEMPERATURE || 0.2),  // tool calling wants low, not zero
+    topP: Number(process.env.OLLAMA_TOP_P || 0.9),
+    numPredict: Number(process.env.OLLAMA_NUM_PREDICT || 800),
+
+    probeTimeoutMs: Number(process.env.PROBE_TIMEOUT_MS || 2000),
+    probeUpTtlMs: Number(process.env.PROBE_UP_TTL_MS || 15000),
+    probeDownTtlMs: Number(process.env.PROBE_DOWN_TTL_MS || 30000),
+    genTimeoutMs: Number(process.env.GEN_TIMEOUT_MS || 90000),
+    queueMax: Number(process.env.QUEUE_MAX || 4),
+
+    maxRounds: Number(process.env.BRAIN_MAX_ROUNDS || 6),
+    maxToolsPerCall: Number(process.env.BRAIN_MAX_TOOLS_PER_CALL || 8),
+    toolResultTokens: Number(process.env.BRAIN_TOOL_RESULT_TOKENS || 1500),
+    turnTimeoutMs: Number(process.env.BRAIN_TURN_TIMEOUT_MS || 90000),
+    historyTurns: Number(process.env.BRAIN_HISTORY_TURNS || 8),
+    get isLocal() { return this.backend === 'local'; },
+  },
+
+  // Text-to-speech for the hands-free conversation mode. Reuses cranium's Kokoro service
+  // (OpenAI-compatible /v1/audio/speech) rather than standing up a second TTS container.
+  tts: {
+    url: process.env.TTS_URL || 'http://cranium-tts:8880',
+    voice: process.env.TTS_VOICE || 'af_heart',
+    format: process.env.TTS_FORMAT || 'mp3',
+    speed: Number(process.env.TTS_SPEED || 1.0),
+    get enabled() { return String(process.env.TTS_ENABLED || 'true').toLowerCase() === 'true' && !!this.url; },
+  },
+
   dockerTool: String(process.env.ENABLE_DOCKER_TOOL || '').toLowerCase() === 'true',
   deviceToken: process.env.DEVICE_TOKEN || '',
   whisperUrl: process.env.WHISPER_URL || 'http://maverick-whisper:9000',

@@ -34,6 +34,17 @@ app.use((req, res, next) => { console.log(`[req] ${req.method} ${req.originalUrl
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
+// Brain reachability, unauthenticated so a monitor can watch it. Reports nothing sensitive:
+// which backend, whether it answers, and what model is loaded.
+app.get('/healthz/brain', async (_req, res) => {
+  try {
+    const s = await require('./assistant').status();
+    res.status(s.up === false ? 503 : 200).json(s);
+  } catch (e) {
+    res.status(503).json({ up: false, error: e.message });
+  }
+});
+
 // --- Device API (watch) — token-auth, NOT behind the Google session gate ---
 app.use('/api/device', require('./routes/device'));
 
@@ -95,6 +106,7 @@ app.use('/api/google', require('./routes/google'));
 app.use('/api/spaces', require('./routes/spaces'));
 app.use('/api/notes', require('./routes/notes'));
 app.use('/api/activity', require('./routes/activity'));
+app.use('/api/voice', require('./routes/voice'));
 app.get('/api/reminders', (req, res) =>
   res.json(db.prepare("SELECT id, text, fire_at, sent FROM reminders WHERE sent=0 ORDER BY fire_at ASC LIMIT 100").all()));
 

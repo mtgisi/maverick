@@ -10,6 +10,8 @@ const ICONS = {
   tasks:'<polyline points="4,12 7,15 12,8" stroke-linecap="round" stroke-linejoin="round"/><line x1="14" y1="7" x2="20" y2="7"/><line x1="14" y1="13" x2="20" y2="13"/><line x1="4" y1="19" x2="20" y2="19"/>',
   spaces:'<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
   mic:'<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0" stroke-linecap="round"/><line x1="12" y1="17" x2="12" y2="21"/>',
+  // conversation mode: a waveform, distinct from the push-to-talk mic at a glance
+  wave:'<line x1="3" y1="12" x2="3" y2="12" stroke-linecap="round"/><line x1="7" y1="8" x2="7" y2="16" stroke-linecap="round"/><line x1="11" y1="4" x2="11" y2="20" stroke-linecap="round"/><line x1="15" y1="8" x2="15" y2="16" stroke-linecap="round"/><line x1="19" y1="10" x2="19" y2="14" stroke-linecap="round"/>',
 };
 const svg = (name, color, w=22) => `<svg width="${w}" height="${w}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="1.8">${ICONS[name]}</svg>`;
 const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -63,10 +65,12 @@ function demoEvents(){
 
 const S = {
   cfg:null, tab:'home', role:'All', detail:null, whyOpen:false,
-  listening:false, thinking:false, chatInput:'',
+  thinking:false, chatInput:'',
   messages:[], pending:[], spaces:[],
   events:null, eventsConnected:false, tasks:null, tasksConnected:false,
   drawer:false, conv:'web',
+  // voice
+  convMode:false, dictating:false, voiceState:'idle', voiceError:'', streaming:'', tool:null,
 };
 
 const api = async (path, opts) => {
@@ -116,17 +120,104 @@ const tasks = () => S.tasks || demoTasks();
 const isDemoTasks = () => !S.tasksConnected;
 const isDemoEvents = () => !S.eventsConnected;
 
-/* ---------- chat ---------- */
+/* ---------- chat ----------
+   Streams over SSE and appends tokens straight into the live bubble. Deliberately does NOT
+   call render() per token: render() reassigns innerHTML on four containers, which would
+   destroy the composer, reset the scroll and replay the fade animation on every message,
+   sixty times a second. Targeted DOM mutation is the only way streaming is usable. */
+
+function liveBubble(){
+  let el = document.getElementById('liveBubble');
+  if (el) return el;
+  const scroll = document.getElementById('chatScroll');
+  if (!scroll) return null;
+  const wrap = document.createElement('div');
+  wrap.className = 'msg ai';
+  wrap.innerHTML = '<div class="bubble" id="liveBubble"></div>';
+  const typing = scroll.querySelector('.typing');
+  scroll.insertBefore(wrap, typing || null);
+  return document.getElementById('liveBubble');
+}
+
+function appendUserBubble(text){
+  const scroll = document.getElementById('chatScroll');
+  if (!scroll) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'msg user';
+  wrap.innerHTML = `<div class="bubble">${esc(text)}</div>`;
+  scroll.appendChild(wrap);
+  scrollChat();
+}
+
 async function send(text){
   text = (text||S.chatInput||'').trim(); if(!text) return;
-  S.messages.push({from:'user',text}); S.chatInput=''; S.tab='chat'; S.detail=null; S.listening=false; S.thinking=true;
-  render();
+  S.messages.push({from:'user',text}); S.chatInput='';
+  const wasChat = S.tab==='chat' && !S.detail;
+  S.tab='chat'; S.detail=null; S.thinking=true; S.streaming='';
+  if (wasChat) { appendUserBubble(text); const i=document.getElementById('chatInput'); if(i) i.value=''; }
+  else render();
+
   try {
-    const d = await api('/chat',{method:'POST',body:JSON.stringify({conversation_id:S.conv,message:text})});
-    S.messages.push({from:'ai',text:d.reply||'(no reply)'});
-    S.pending = d.pending||[];
-  } catch(e){ S.messages.push({from:'ai',text:'Something went wrong reaching the assistant.'}); }
-  S.thinking=false; render(); scrollChat();
+    const r = await fetch('/api/chat',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({conversation_id:S.conv,message:text}),
+    });
+    if (r.status===401) { location.href='/login'; return; }
+    if (!r.ok || !r.body) throw new Error('http '+r.status);
+
+    const reader=r.body.getReader(), dec=new TextDecoder();
+    let buf='', done=null;
+    for(;;){
+      const {done:fin, value}=await reader.read();
+      if(fin) break;
+      buf+=dec.decode(value,{stream:true});
+      let i;
+      while((i=buf.indexOf('\n\n'))>=0){
+        const frame=buf.slice(0,i).trim(); buf=buf.slice(i+2);
+        if(!frame.startsWith('data:')) continue;
+        let ev; try{ ev=JSON.parse(frame.slice(5).trim()); }catch(_){ continue; }
+
+        if(ev.type==='token'){
+          S.thinking=false; S.streaming+=ev.text;
+          const b=liveBubble(); if(b){ b.innerHTML=md(S.streaming); scrollChat(); }
+          const t=document.querySelector('#chatScroll .typing'); if(t) t.remove();
+        } else if(ev.type==='tool_start'){
+          S.tool=ev.tool; setToolHint(toolLabel(ev.tool));
+        } else if(ev.type==='tool_end'){
+          S.tool=null; setToolHint('');
+        } else if(ev.type==='done'){
+          done=ev;
+        } else if(ev.type==='error'){
+          throw new Error(ev.message||ev.error);
+        }
+      }
+    }
+    const reply=(done&&done.reply)||S.streaming||'(no reply)';
+    S.messages.push({from:'ai',text:reply});
+    S.pending=(done&&done.pending)||[];
+  } catch(e){
+    S.messages.push({from:'ai',text:'Could not reach the assistant. '+(e.message||'')});
+  }
+  S.thinking=false; S.streaming=''; S.tool=null;
+  render(); scrollChat();
+}
+
+const TOOL_LABELS={
+  list_calendar_events:'checking your calendar', list_calendars:'checking your calendars',
+  list_tasks:'reading your tasks', add_task:'adding the task', complete_task:'marking it done',
+  reschedule_task:'moving the due date', ask_supervisor:'filing the question',
+  get_timesheet:'reading your timesheet', propose_timesheet_change:'preparing the change',
+  draft_email:'drafting the email', save_memory:'saving that', list_memories:'looking through your notes',
+  schedule_reminder:'setting the reminder', list_reminders:'checking your reminders',
+  list_drive_files:'searching Drive', read_doc:'reading the doc', read_sheet:'reading the sheet',
+  read_slides:'reading the deck', list_bookmarks:'checking bookmarks',
+  container_status:'checking the server', search_youtube:'searching YouTube',
+};
+const toolLabel = n => TOOL_LABELS[n] || ('running '+String(n||'').replace(/_/g,' '));
+
+function setToolHint(text){
+  const el=document.getElementById('toolHint');
+  if(el){ el.textContent=text; el.style.display=text?'':'none'; }
 }
 /* ---------- spaces management ---------- */
 async function addSpace(){
@@ -153,18 +244,92 @@ async function delSpace(key){
 async function confirmPending(id){ await api('/timesheet/confirm',{method:'POST',body:JSON.stringify({id})}); S.pending=S.pending.filter(p=>p.id!==id); S.messages.push({from:'ai',text:'Done — applied and logged.'}); render(); }
 async function cancelPending(id){ await api('/timesheet/cancel',{method:'POST',body:JSON.stringify({id})}); S.pending=S.pending.filter(p=>p.id!==id); render(); }
 
-/* ---------- speech (Web Speech API) ---------- */
-let recog=null;
-function toggleMic(){
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if(!SR){ alert('Voice dictation needs Chrome/Edge or Safari.'); return; }
-  if(S.listening){ recog && recog.stop(); S.listening=false; render(); return; }
-  recog = new SR(); recog.lang='en-US'; recog.interimResults=true; recog.continuous=false;
-  S.listening=true; S.chatInput=''; render();
-  recog.onresult = e => { let t=''; for(const r of e.results) t+=r[0].transcript; S.chatInput=t; const inp=document.getElementById('chatInput'); if(inp) inp.value=t; };
-  recog.onerror = () => { S.listening=false; render(); };
-  recog.onend = () => { S.listening=false; render(); if((S.chatInput||'').trim()) send(); };
-  recog.start();
+/* ---------- voice ----------
+   Replaces the Web Speech API, which was Chrome/Safari only, single-shot, had no VAD, and
+   shipped your audio to Google. Both modes now go through self-hosted Whisper.
+
+   Dictation    hold-to-talk. Transcript lands in the composer. Never answers.
+   Conversation continuous hands-free, with TTS and barge-in. See public/voice.js. */
+
+let voice=null;
+
+function ensureVoice(){
+  if(voice) return voice;
+  voice = new VoiceLoop({
+    onState: s => {
+      S.voiceState = s;
+      if(s.startsWith('working:')) setToolHint(toolLabel(s.slice(8)));
+      updateVoiceChrome();
+    },
+    onTranscript: t => {
+      if(voice.mode==='conversation'){
+        S.messages.push({from:'user',text:t});
+        appendUserBubble(t);
+        S.streaming=''; S.thinking=true;
+      } else {
+        S.chatInput=t;
+        const i=document.getElementById('chatInput'); if(i){ i.value=t; i.focus(); }
+      }
+    },
+    onToken: tok => {
+      S.thinking=false; S.streaming+=tok;
+      const b=liveBubble(); if(b){ b.innerHTML=md(S.streaming); scrollChat(); }
+      const t=document.querySelector('#chatScroll .typing'); if(t) t.remove();
+    },
+    onReply: (reply, ev) => {
+      S.messages.push({from:'ai',text:reply});
+      S.pending=(ev&&ev.pending)||S.pending;
+      S.streaming=''; S.thinking=false; S.tool=null; setToolHint('');
+      render(); scrollChat();
+    },
+    onError: msg => { S.voiceError=msg; updateVoiceChrome(); setTimeout(()=>{ S.voiceError=''; updateVoiceChrome(); },4000); },
+  });
+  return voice;
+}
+
+// Hold to dictate. Pointer events so it works with touch and mouse alike.
+async function dictateStart(){
+  if(S.convMode) return;                       // conversation mode owns the mic
+  const v=ensureVoice();
+  S.dictating=true; updateVoiceChrome();
+  await v.startDictation();
+}
+async function dictateStop(){
+  if(!S.dictating) return;
+  S.dictating=false;
+  const v=ensureVoice();
+  await v.stopDictation();
+  updateVoiceChrome();
+}
+
+async function toggleConversation(){
+  const v=ensureVoice();
+  if(S.convMode){ v.stop(); S.convMode=false; S.voiceState='idle'; updateVoiceChrome(); return; }
+  S.tab='chat'; S.detail=null; render();
+  const ok=await v.startConversation(S.conv);
+  S.convMode=!!ok; updateVoiceChrome();
+}
+
+const VOICE_COPY={
+  listening:'Listening', transcribing:'Got it…', thinking:'Thinking',
+  speaking:'Speaking', dictating:'Dictating', idle:'',
+};
+
+// Targeted update, not a full render: the mic button must not be rebuilt while it is being
+// held down, or the pointerup never lands on the same element.
+function updateVoiceChrome(){
+  const badge=document.getElementById('voiceBadge');
+  const btn=document.getElementById('convBtn');
+  const mic=document.getElementById('micBtn');
+  const st=S.voiceState||'idle';
+  const label=S.voiceError || (st.startsWith('working:') ? toolLabel(st.slice(8)) : VOICE_COPY[st]||'');
+  if(badge){
+    badge.textContent=label;
+    badge.className='voice-badge'+(S.voiceError?' err':'')+(st==='listening'?' live':'');
+    badge.style.display=(S.convMode||label)?'':'none';
+  }
+  if(btn) btn.className='conv-btn'+(S.convMode?' on':'');
+  if(mic) mic.className='mic'+(S.dictating?' live':'');
 }
 
 /* ---------- render ---------- */
@@ -328,11 +493,14 @@ function render(){
   // chrome (bottom nav + omnipresent chat bar)
   document.getElementById('chrome').innerHTML = `
     <div class="nav">${NAV.map(([k,l])=>`<a class="${S.tab===k&&!S.detail?'active':''}" data-go="${k}">${svg(k,S.tab===k&&!S.detail?'#e6a92c':'#6f6a5e')}<span>${l}</span></a>`).join('')}</div>
+    <div class="voice-row"><span class="voice-badge" id="voiceBadge" style="display:none"></span><span class="tool-hint" id="toolHint" style="display:none"></span></div>
     <div class="bar-chat">
-      <button class="mic${S.listening?' live':''}" data-act="mic">${svg('mic',S.listening?'#141109':'#cfc6b4',18)}</button>
-      <input id="chatInput" placeholder="${S.listening?'Listening…':'Ask or tell '+brand()+' anything…'}" value="${esc(S.chatInput)}">
+      <button class="mic" id="micBtn" title="Hold to dictate">${svg('mic','#cfc6b4',18)}</button>
+      <input id="chatInput" placeholder="Ask or tell ${esc(brand())} anything…" value="${esc(S.chatInput)}">
+      <button class="conv-btn" id="convBtn" data-act="conv" title="Hands-free conversation">${svg('wave','#cfc6b4',18)}</button>
       <button class="send" data-act="send">↑</button>
     </div>`;
+  updateVoiceChrome();
 
   // drawer
   const dr=document.getElementById('drawer'), sc=document.getElementById('scrim');
@@ -382,11 +550,21 @@ document.addEventListener('click', e=>{
   if(a==='settings'){ S.drawer=!S.drawer; render(); }
   else if(a==='back'){ S.detail=null; render(); }
   else if(a==='why'){ S.whyOpen=!S.whyOpen; render(); }
-  else if(a==='mic'){ toggleMic(); }
+  else if(a==='conv'){ toggleConversation(); }
   else if(a==='send'){ const inp=document.getElementById('chatInput'); S.chatInput=inp?inp.value:''; send(); }
   else if(a==='chat-plan'){ send('Plan my day and tell me what to start with.'); }
   else if(a==='install'){ if(deferredPrompt){ deferredPrompt.prompt(); deferredPrompt=null; } else alert('Use your browser menu → Add to Home Screen.'); }
 });
+// Hold-to-dictate. Delegated pointer events on document, so the handler survives the
+// chrome being re-rendered underneath it.
+document.addEventListener('pointerdown', e=>{
+  const m=e.target.closest('#micBtn'); if(!m) return;
+  e.preventDefault(); m.setPointerCapture && m.setPointerCapture(e.pointerId);
+  dictateStart();
+});
+document.addEventListener('pointerup', e=>{ if(S.dictating) dictateStop(); });
+document.addEventListener('pointercancel', ()=>{ if(S.dictating) dictateStop(); });
+
 document.addEventListener('input', e=>{ if(e.target.id==='chatInput') S.chatInput=e.target.value; });
 document.addEventListener('keydown', e=>{ if(e.target.id==='chatInput' && e.key==='Enter'){ S.chatInput=e.target.value; send(); } });
 document.getElementById('scrim').addEventListener('click', ()=>{ S.drawer=false; render(); });

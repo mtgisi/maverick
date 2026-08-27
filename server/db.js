@@ -66,6 +66,20 @@ db.exec(`
     sort INTEGER DEFAULT 0
   );
 
+  -- Conversation history. Under the Claude Code brain this lived inside the CLI's own
+  -- session (replayed with --resume). The local brain has no such thing, so Maverick keeps
+  -- its own transcript and assembles the context window itself (LOCAL-BRAIN-SPEC 8.4).
+  CREATE TABLE IF NOT EXISTS messages (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL,
+    role            TEXT NOT NULL,      -- 'user' | 'assistant' | 'tool'
+    content         TEXT NOT NULL DEFAULT '',
+    tool_calls      TEXT,               -- JSON array, on assistant turns that called tools
+    tool_name       TEXT,               -- set when role='tool'
+    created_at      TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id);
+
   -- Every tool invocation, whoever asked for it. The spine of the observability view
   -- (/api/turns) and the evidence trail for privileged actions. Written by
   -- server/tools/index.js before the side effect and updated after, so a crash
@@ -99,6 +113,16 @@ db.exec(`
     updated_at TEXT DEFAULT (datetime('now'))
   );
 `);
+
+// Additive column migrations. better-sqlite3 has no ADD COLUMN IF NOT EXISTS, so guard each
+// with a table_info check. Nothing is ever dropped here, including the now-dead
+// conversations.cc_session_id: dropping a column in SQLite is a full table rebuild for no gain.
+function addColumn(table, column, decl) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+  if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
+}
+addColumn('conversations', 'summary', 'TEXT');           // rolling summary of folded-out turns
+addColumn('conversations', 'summary_upto', 'INTEGER');   // highest messages.id covered by it
 
 // Seed a neutral, generic set of spaces on first run — every user renames/adds/removes these
 // from the Spaces screen. Override the starter set with DEFAULT_SPACES (comma-separated labels).

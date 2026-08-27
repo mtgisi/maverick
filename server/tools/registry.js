@@ -233,23 +233,49 @@ const TOOLS = [
     name: 'list_tasks',
     group: 'tasks',
     tier: 'read',
-    description: 'List open tasks from the Charliework task manager. Returns each task with its id (needed to complete/reschedule).',
+    description: 'List open tasks. Returns a count first, then the most urgent ones with their id. Call this before complete_task or reschedule_task to get a real id; never guess an id.',
     schema: { type: 'object', properties: {
       category: { type: 'string', description: 'Filter by category slug: tech, biz_comp, esports, robotics, st_croix, ultimate, personal.' },
       include_done: { type: 'boolean' },
+      limit: { type: 'number', description: 'How many to list. Default 12.' },
     } },
     handler: async (a) => {
       if (!charliework.enabled()) return 'Task manager (Charliework) is not connected.';
       const res = await charliework.listTasks({ category: a.category, includeDone: !!a.include_done });
       const ts = res.tasks || [];
-      if (!ts.length) return '(no open tasks)';
-      return ts.map(t => {
+      if (!ts.length) return 'TOTAL: 0 open tasks.';
+
+      // Lead with the count and sort by urgency rather than dumping the raw list.
+      //
+      // The raw 48-line dump made qwen2.5:7b answer "there are no open tasks" in voice mode:
+      // it had the data and could not summarise it. A small model should not have to count
+      // rows or infer priority. State the total, order by urgency, and cap the listing.
+      const rank = t => t.is_overdue ? 0 : t.is_due_soon ? 1 : t.due_date ? 2 : 3;
+      const sorted = [...ts].sort((x, y) =>
+        rank(x) - rank(y) || String(x.due_date || '9999').localeCompare(String(y.due_date || '9999')));
+
+      const overdue = ts.filter(t => t.is_overdue).length;
+      const soon = ts.filter(t => !t.is_overdue && t.is_due_soon).length;
+      const limit = Math.min(Math.max(Number(a.limit) || 12, 1), 50);
+      const shown = sorted.slice(0, limit);
+
+      const header = `TOTAL: ${ts.length} open task${ts.length === 1 ? '' : 's'}`
+        + (overdue ? `, ${overdue} overdue` : '')
+        + (soon ? `, ${soon} due soon` : '')
+        + (a.category ? ` in category ${a.category}` : '')
+        + `. Listing the ${shown.length} most urgent:`;
+
+      const lines = shown.map(t => {
         const flags = [
           t.is_overdue ? 'OVERDUE' : (t.is_due_soon ? 'due soon' : ''),
           t.awaiting_review ? 'needs review' : '',
         ].filter(Boolean).join(', ');
         return `- ${t.title}${t.due_date ? ` (due ${t.due_date})` : ''}${t.category ? ` [${t.category}]` : ''}${flags ? ` <${flags}>` : ''}  id=${t.id}`;
-      }).join('\n');
+      });
+
+      const rest = ts.length - shown.length;
+      return [header, ...lines, rest > 0 ? `(${rest} more not shown; ask for a category or a higher limit)` : '']
+        .filter(Boolean).join('\n');
     },
   },
   {

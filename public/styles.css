@@ -79,6 +79,13 @@ button,input{font-family:inherit;color:inherit}
 .task.done .t{color:var(--dim);text-decoration:line-through}
 .task .due{font-size:11.5px;color:var(--faint);margin-top:2px}
 .role-tag{font-size:10px;font-weight:600;padding:3px 8px;border-radius:7px;white-space:nowrap;border:1px solid;opacity:0.85}
+.task-list{display:flex;flex-direction:column;gap:9px}
+.task .t{overflow-wrap:anywhere}
+.task .due:empty{display:none}
+/* Which system a task lives in. Gold = work, sage = personal, matching the source chips. */
+.src-tag{font-family:var(--mono);font-size:9.5px;letter-spacing:0.08em;text-transform:uppercase;padding:3px 7px;border-radius:6px;white-space:nowrap;color:var(--gold-3);border:1px solid rgba(230,169,44,0.35);background:rgba(230,169,44,0.07)}
+.src-tag.personal{color:var(--sage);border-color:rgba(156,169,128,0.35);background:rgba(156,169,128,0.08)}
+.empty{color:var(--muted);padding:22px 4px;font-size:13.5px}
 
 /* ===== Spaces ===== */
 .space{background:rgba(255,255,255,0.04);border:1px solid var(--line);border-radius:var(--r-card);padding:15px;cursor:pointer;border-top:3px solid var(--gold)}

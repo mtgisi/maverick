@@ -135,6 +135,9 @@ app.get('/', requireAuth, (req, res) =>
   res.type('html').send(INDEX_HTML.replace(/<title>[^<]*<\/title>/, `<title>${cfg.BRAND_NAME}</title>`)));
 app.use(express.static(path.join(__dirname, '../public')));
 
+// --- Task mirror — poll charliework + goosework into the unified `tasks` table ---
+require('./services/tasks').startSync();
+
 // --- Reminder poller — every 30s, fire any due reminders via ntfy ---
 setInterval(async () => {
   const due = db.prepare("SELECT id, text FROM reminders WHERE sent=0 AND fire_at <= ?").all(new Date().toISOString());

@@ -1,6 +1,6 @@
 # Maverick overhaul plan
 
-**Status:** plan, awaiting go-ahead. Nothing in here has been built yet.
+**Status:** in progress. Phases 0, 2, 3, 4, 5 and 8 are built and deployed; see section 12.
 **Written:** 2026-08-23, against maverick as deployed on gisiserver.
 **Supersedes nothing.** It absorbs `docs/LOCAL-BRAIN-SPEC.md` (still authoritative for the
 brain internals) and extends it to cover the rest of the overhaul.
@@ -532,21 +532,32 @@ graph LR
 `POST /api/device/*` keeps its current JSON contract unchanged. The watch is not taught SSE.
 
 ## 12. Phased plan
+**Progress, 2026-08-27.** Phases 0, 2, 3, 4, 5 and 8 are done. Ordering changed once: phase 4
+was listed as blocked on phase 1, which was wrong. Phase 1 is tuning (KV quantization, wake-on
+LAN); the model was already resident and already answering tool calls, so the agent loop was
+buildable immediately and the real-time conversation was the priority. What the goose-desktop
+visit now buys is GPU STT and TTS, which are the entire remaining voice latency: the brain
+answers in under a second while CPU Whisper costs 1.5 to 3.2s and CPU Kokoro roughly 1.6s plus
+0.045s per character.
+
+Remaining: 1 (goose-desktop prep), 6 (UI spacing), 7 (Whisper on GPU), 9 and 10 (bastion agent),
+11 (mail read), 12 (cutover).
+
 
 Phases 0 through 7 of LOCAL-BRAIN-SPEC are absorbed here rather than restated; where a
 phase below maps to one, it says so. Each phase ends in a working system.
 
 | # | Phase | Delivers | Depends on | Access |
 | --- | --- | --- | --- | --- |
-| 0 | Baseline + audit spine | `docs/BASELINE.md`, `audit` table, `/api/turns` | nothing | gisiserver |
+| 0 | **DONE** Baseline + audit spine | `docs/BASELINE.md`, `audit` table, `/api/turns` | nothing | gisiserver |
 | 1 | goose-desktop prep | ollama env, WoL recovery, model bake-off | 0 | **at the desktop** |
-| 2 | Tool registry extraction | `tools/registry.js`, `mcp-server.js` under 60 lines | 0 | gisiserver |
-| 3 | Unified tasks | goosework agent API, mirror table, sync loop, task tools | 0 | gisiserver |
-| 4 | Agent loop | `brain/`, local turns behind `BRAIN_BACKEND` | 1, 2 | gisiserver |
-| 5 | Streaming | SSE `/api/chat`, tool progress events | 4 | gisiserver |
+| 2 | **DONE** Tool registry extraction | `tools/registry.js`, `mcp-server.js` under 60 lines | 0 | gisiserver |
+| 3 | **DONE** Unified tasks | goosework agent API, mirror table, sync loop, task tools | 0 | gisiserver |
+| 4 | **DONE** Agent loop | `brain/`, local turns behind `BRAIN_BACKEND` | 1, 2 | gisiserver |
+| 5 | **DONE** Streaming | SSE `/api/chat`, tool progress events | 4 | gisiserver |
 | 6 | UI rework | spacing scale, chat layout, targeted updates, demo tiles gone | 5 | gisiserver |
 | 7 | Whisper on the 3070 | GPU STT, CPU whisper container removed | 1 | **at the desktop** |
-| 8 | Voice | dictation mode, conversation mode, VAD, TTS, barge-in | 6, 7 | gisiserver |
+| 8 | **DONE** Voice | dictation mode, conversation mode, VAD, TTS, barge-in | 6, 7 | gisiserver |
 | 9 | Bastion agent | `maverick-node`, read-only first | 5 | bastion |
 | 10 | Bastion writes | command queue, grants, voice control | 9 soaked | bastion |
 | 11 | Mail read | re-consent, search/read/summarize tools | 4 | gisiserver |

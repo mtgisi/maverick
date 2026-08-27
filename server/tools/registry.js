@@ -20,6 +20,7 @@ const db = require('../db');
 const { TZ } = require('../config');
 const timeclock = require('../integrations/timeclock');
 const charliework = require('../integrations/charliework');
+const tasks = require('../services/tasks');
 const bookmarks = require('../integrations/bookmarks');
 const containers = require('../integrations/containers');
 const gcal = require('../google/client');
@@ -47,6 +48,14 @@ const fmtLocal = iso => iso ? new Date(iso).toLocaleString('en-US', {
 
 const dayInTZ = (d = new Date()) =>
   new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+
+// A model that guesses a task id must be told exactly why it failed, or it guesses again.
+// Naming the real format and the tool that produces it is what makes the retry succeed.
+const badId = id => `error: "${id}" is not a known task id. Ids look like "cw:<id>" (work) or `
+  + `"gw:<id>" (personal) and only come from list_tasks. Call list_tasks and use an id exactly as printed.`;
+
+// What the user calls each system. The internal names mean nothing to them or to the model.
+const SOURCE_LABEL = { charliework: 'work', goosework: 'personal' };
 
 // ---- the tools -------------------------------------------------------------------------
 
@@ -233,33 +242,67 @@ const TOOLS = [
     name: 'list_tasks',
     group: 'tasks',
     tier: 'read',
-    description: 'List open tasks. Returns a count first, then the most urgent ones with their id. Call this before complete_task or reschedule_task to get a real id; never guess an id.',
+    description: 'List open tasks from both task systems merged into one list. Returns a total count first, then the most urgent tasks each with an id like "cw:abc" or "gw:xyz". Always call this before complete_task, reschedule_task or add_task_note, and use an id exactly as printed. Never invent an id.',
     schema: { type: 'object', properties: {
-      category: { type: 'string', description: 'Filter by category slug: tech, biz_comp, esports, robotics, st_croix, ultimate, personal.' },
-      include_done: { type: 'boolean' },
+      source: {
+        type: 'string', enum: ['charliework', 'goosework'],
+        // The system names are opaque, and "personal" is also a category slug in BOTH
+        // systems, so the model previously answered "you have no personal tasks" while five
+        // sat in goosework. The mapping has to be spelled out here, next to the schema,
+        // because that is what the model reads.
+        description: 'Which system. "charliework" holds WORK and school tasks. "goosework" holds PERSONAL and home tasks. If the user says personal, home, my own, or life, use goosework. If they say work, school, or the job, use charliework. Omit to search both.',
+      },
+      category: { type: 'string', description: 'Optional, and usually omit it. Only pass this when the user named a specific category. Do NOT pass it just because they said "personal" or "work" — that is what `source` is for. charliework slugs: tech, biz_comp, esports, robotics, st_croix, ultimate, personal. goosework slugs: server, work, esports, family, personal.' },
+      include_done: { type: 'boolean', description: 'Include completed tasks. Default false.' },
       limit: { type: 'number', description: 'How many to list. Default 12.' },
     } },
     handler: async (a) => {
-      if (!charliework.enabled()) return 'Task manager (Charliework) is not connected.';
-      const res = await charliework.listTasks({ category: a.category, includeDone: !!a.include_done });
-      const ts = res.tasks || [];
-      if (!ts.length) return 'TOTAL: 0 open tasks.';
+      const st = tasks.status();
+      if (!st.sources.some(s => s.connected)) return 'No task system is connected.';
+
+      const status = a.include_done ? 'all' : 'open';
+      const rows = tasks.list({ source: a.source, category: a.category, status, limit: 500 });
+
+      if (!rows.length) {
+        // An empty result is ambiguous: genuinely nothing, or a filter that excluded
+        // everything. Observed: the model answered "personal" by passing BOTH
+        // source=goosework and category=personal, and every goosework row has a null
+        // category, so it reported zero tasks while five existed. Say what was excluded so
+        // the model can drop the filter and retry instead of confidently reporting nothing.
+        const broader = tasks.list({ source: a.source, status, limit: 500 });
+        if (a.category && broader.length) {
+          return `TOTAL: 0 tasks match category "${a.category}"`
+            + (a.source ? ` in ${SOURCE_LABEL[a.source] || a.source}` : '')
+            + `. However there ARE ${broader.length} task(s) there once the category filter is dropped. `
+            + `Call list_tasks again without "category".`;
+        }
+        const all = tasks.list({ status, limit: 500 });
+        if (a.source && all.length) {
+          return `TOTAL: 0 tasks in ${SOURCE_LABEL[a.source] || a.source}. `
+            + `There are ${all.length} across both systems; call list_tasks without "source" to see them.`;
+        }
+        return 'TOTAL: 0 open tasks.';
+      }
 
       // Lead with the count and sort by urgency rather than dumping the raw list.
       //
       // The raw 48-line dump made qwen2.5:7b answer "there are no open tasks" in voice mode:
       // it had the data and could not summarise it. A small model should not have to count
       // rows or infer priority. State the total, order by urgency, and cap the listing.
-      const rank = t => t.is_overdue ? 0 : t.is_due_soon ? 1 : t.due_date ? 2 : 3;
-      const sorted = [...ts].sort((x, y) =>
-        rank(x) - rank(y) || String(x.due_date || '9999').localeCompare(String(y.due_date || '9999')));
-
-      const overdue = ts.filter(t => t.is_overdue).length;
-      const soon = ts.filter(t => !t.is_overdue && t.is_due_soon).length;
+      const open = rows.filter(t => t.status === 'open');
+      const overdue = open.filter(t => t.is_overdue).length;
+      const soon = open.filter(t => !t.is_overdue && t.is_due_soon).length;
       const limit = Math.min(Math.max(Number(a.limit) || 12, 1), 50);
-      const shown = sorted.slice(0, limit);
+      const shown = rows.slice(0, limit);
 
-      const header = `TOTAL: ${ts.length} open task${ts.length === 1 ? '' : 's'}`
+      // Report the split in the words the user uses, not the internal system names.
+      const bySource = {};
+      for (const t of open) bySource[t.source] = (bySource[t.source] || 0) + 1;
+      const split = Object.entries(bySource)
+        .map(([s, n]) => `${n} ${SOURCE_LABEL[s] || s}`).join(', ');
+
+      const header = `TOTAL: ${open.length} open task${open.length === 1 ? '' : 's'}`
+        + (split ? ` (${split})` : '')
         + (overdue ? `, ${overdue} overdue` : '')
         + (soon ? `, ${soon} due soon` : '')
         + (a.category ? ` in category ${a.category}` : '')
@@ -267,14 +310,17 @@ const TOOLS = [
 
       const lines = shown.map(t => {
         const flags = [
+          t.status === 'done' ? 'DONE' : '',
           t.is_overdue ? 'OVERDUE' : (t.is_due_soon ? 'due soon' : ''),
-          t.awaiting_review ? 'needs review' : '',
+          t.flags && (t.flags.awaiting_review || t.flags.pending_review) ? 'needs review' : '',
+          t.synced ? '' : 'not yet synced',
         ].filter(Boolean).join(', ');
-        return `- ${t.title}${t.due_date ? ` (due ${t.due_date})` : ''}${t.category ? ` [${t.category}]` : ''}${flags ? ` <${flags}>` : ''}  id=${t.id}`;
+        const where = SOURCE_LABEL[t.source] || t.source;
+        return `- ${t.title}${t.due_date ? ` (due ${t.due_date})` : ''} [${where}${t.category ? `/${t.category}` : ''}]${flags ? ` <${flags}>` : ''}  id=${t.id}`;
       });
 
-      const rest = ts.length - shown.length;
-      return [header, ...lines, rest > 0 ? `(${rest} more not shown; ask for a category or a higher limit)` : '']
+      const rest = rows.length - shown.length;
+      return [header, ...lines, rest > 0 ? `(${rest} more not shown; narrow by category or raise the limit)` : '']
         .filter(Boolean).join('\n');
     },
   },
@@ -282,49 +328,80 @@ const TOOLS = [
     name: 'add_task',
     group: 'tasks',
     tier: 'write',
-    description: 'Create a task in Charliework.',
+    description: 'Create a task. Choose the system with `source`. If the user did not make clear whether it is work or personal, ask them rather than guessing.',
     schema: { type: 'object', properties: {
       title: { type: 'string' },
+      source: {
+        type: 'string', enum: ['charliework', 'goosework'],
+        description: 'Which system. "charliework" for WORK and school tasks. "goosework" for PERSONAL and home tasks.',
+      },
       due_date: { type: 'string', description: 'YYYY-MM-DD.' },
-      category: { type: 'string', description: 'Comma-separated slugs: tech, biz_comp, esports, robotics, st_croix, ultimate, personal.' },
+      category: { type: 'string', description: 'Category slug for the chosen system.' },
       notes: { type: 'string' },
       tier: { type: 'string', enum: ['normal', 'someday'] },
-      assignee: { type: 'string', enum: ['user_a', 'user_b', 'together'] },
-    }, required: ['title'] },
+    }, required: ['title', 'source'] },
     handler: async (a) => {
-      if (!charliework.enabled()) return 'Task manager (Charliework) is not connected.';
-      const r = await charliework.addTask({
-        title: a.title, due_date: a.due_date, category: a.category,
-        notes: a.notes, tier: a.tier, assignee: a.assignee,
+      const r = await tasks.create({
+        source: a.source, title: a.title, due_date: a.due_date,
+        category: a.category, notes: a.notes, tier: a.tier,
       });
-      return `Added task: "${a.title}"${a.due_date ? ` (due ${a.due_date})` : ''}${r.task && r.task.id ? ` id=${r.task.id}` : ''}`;
+      if (!r.ok) return `error: ${r.error}`;
+      return `Added to ${a.source}: "${r.task.title}"${r.task.due_date ? ` (due ${r.task.due_date})` : ''}  id=${r.task.id}`;
     },
   },
   {
     name: 'complete_task',
     group: 'tasks',
     tier: 'write',
-    description: 'Mark a Charliework task done. Get task_id from list_tasks first.',
-    schema: { type: 'object', properties: { task_id: { type: 'string' } }, required: ['task_id'] },
+    description: 'Mark a task done in whichever system owns it. task_id must be an id from list_tasks, in the form "cw:..." or "gw:...".',
+    schema: { type: 'object', properties: {
+      task_id: { type: 'string', description: 'Exactly as printed by list_tasks, e.g. "cw:62eb2a14" or "gw:9f1c...".' },
+    }, required: ['task_id'] },
     handler: async (a) => {
-      if (!charliework.enabled()) return 'Task manager (Charliework) is not connected.';
-      const r = await charliework.completeTask(a.task_id);
-      return `Marked done: "${(r.task && r.task.title) || a.task_id}"`;
+      const known = tasks.get(a.task_id);
+      if (!known) return badId(a.task_id);
+      const r = await tasks.update(a.task_id, { status: 'done' });
+      if (!r.ok) return `error: ${r.error}`;
+      return r.pushed
+        ? `Marked done in ${known.source}: "${known.title}"`
+        : `Marked done locally: "${known.title}", but ${known.source} did not accept it yet. It will retry.`;
     },
   },
   {
     name: 'reschedule_task',
     group: 'tasks',
     tier: 'write',
-    description: "Change a Charliework task's due date. Get task_id from list_tasks first.",
+    description: "Change a task's due date in whichever system owns it. task_id must be an id from list_tasks.",
     schema: { type: 'object', properties: {
-      task_id: { type: 'string' },
+      task_id: { type: 'string', description: 'Exactly as printed by list_tasks.' },
       due_date: { type: 'string', description: 'YYYY-MM-DD.' },
     }, required: ['task_id', 'due_date'] },
     handler: async (a) => {
-      if (!charliework.enabled()) return 'Task manager (Charliework) is not connected.';
-      const r = await charliework.rescheduleTask(a.task_id, a.due_date);
-      return `Rescheduled "${(r.task && r.task.title) || a.task_id}" to ${a.due_date}.`;
+      const known = tasks.get(a.task_id);
+      if (!known) return badId(a.task_id);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(a.due_date))) return 'error: due_date must be YYYY-MM-DD';
+      const r = await tasks.update(a.task_id, { due_date: a.due_date });
+      if (!r.ok) return `error: ${r.error}`;
+      return `Rescheduled "${known.title}" to ${a.due_date}.`;
+    },
+  },
+  {
+    name: 'add_task_note',
+    group: 'tasks',
+    tier: 'write',
+    description: "Add a note to a task, appended to whatever notes it already has. task_id must be an id from list_tasks.",
+    schema: { type: 'object', properties: {
+      task_id: { type: 'string', description: 'Exactly as printed by list_tasks.' },
+      note: { type: 'string', description: 'The text to append.' },
+    }, required: ['task_id', 'note'] },
+    handler: async (a) => {
+      const known = tasks.get(a.task_id);
+      if (!known) return badId(a.task_id);
+      const stamp = new Date().toLocaleDateString('en-CA', { timeZone: TZ });
+      const merged = [known.notes, `${stamp}: ${a.note}`].filter(Boolean).join('\n');
+      const r = await tasks.update(a.task_id, { notes: merged });
+      if (!r.ok) return `error: ${r.error}`;
+      return `Added a note to "${known.title}".`;
     },
   },
   {

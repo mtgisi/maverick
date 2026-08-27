@@ -45,6 +45,22 @@ module.exports = {
     token: process.env.CHARLIEWORK_API_TOKEN || '',
     get enabled() { return !!(this.url && this.token); },
   },
+  goosework: {
+    url: process.env.GOOSEWORK_API_URL || '',
+    token: process.env.GOOSEWORK_API_TOKEN || '',
+    get enabled() { return !!(this.url && this.token); },
+  },
+
+  // Unified task mirror. Both task systems are polled into maverick's own `tasks` table so
+  // the merged list is fast and survives an origin being slow or down; edits are queued back
+  // to whichever system owns the row.
+  tasksSync: {
+    intervalMs: Number(process.env.TASK_SYNC_INTERVAL_MS || 60000),
+    enabled: String(process.env.TASK_SYNC_ENABLED || 'true').toLowerCase() === 'true',
+    // A row missing from an origin for this many consecutive SUCCESSFUL pulls is deleted
+    // locally. Two, so a single odd-but-successful response never destroys local state.
+    missesBeforeDelete: Number(process.env.TASK_SYNC_MISSES || 2),
+  },
   // --- local brain (ollama on goose-desktop, RTX 3070) ---
   // BRAIN_BACKEND is the rollback lever for the soak window and nothing else: 'local' runs
   // the agent loop against ollama, 'claude' falls back to the Claude Code CLI. Do not build

@@ -50,7 +50,8 @@ function demoTasks(){
     ['Plan tomorrow’s schedule','Tomorrow'],
     ['Tidy up notes & follow-ups','This week'],
   ];
-  return rows.map((r,i)=>({id:'demo'+i,title:r[0],role:sp[i%sp.length].key,due:r[1],done:false}));
+  return rows.map((r,i)=>({id:'demo'+i,title:r[0],role:sp[i%sp.length].key,due:r[1],done:false,
+                           source:null,synced:true,overdue:false}));
 }
 function demoEvents(){
   const sp = demoSpaces();
@@ -69,6 +70,8 @@ const S = {
   messages:[], pending:[], spaces:[],
   events:null, eventsConnected:false, tasks:null, tasksConnected:false,
   drawer:false, conv:'web',
+  // tasks (unified charliework + goosework mirror)
+  taskSource:'All', taskCounts:null, taskSources:[], tasksUnsynced:0,
   // voice
   convMode:false, dictating:false, voiceState:'idle', voiceError:'', streaming:'', tool:null,
 };
@@ -100,21 +103,27 @@ async function loadEvents(){
     S.events = d.connected ? (d.events||[]).filter(e=>!e.error).map(e=>({time:e.time||'all day',title:e.title,sub:(e.location||e.account||''),role:S.role==='All'?'Personal':S.role})) : null;
   } catch(_){ S.eventsConnected=false; S.events=null; }
 }
+// Tasks come from the unified mirror (charliework + goosework), already merged and sorted
+// by urgency server-side. Each row carries its source and its sync state; neither is hidden.
 async function loadTasks(){
   try {
-    const d = await api('/tasks');
+    const d = await api('/tasks?limit=200');
     S.tasksConnected = !!d.connected;
+    S.taskCounts = d.counts||null;
+    S.taskSources = d.sources||[];
+    S.tasksUnsynced = d.unsynced||0;
     const fallbackRole = () => (S.spaces[0] && S.spaces[0].key) || 'personal';
-    const catToRole = cat => {
-      const c = String(cat||'').split(',')[0].trim().toLowerCase();
-      const hit = S.spaces.find(s => s.key.toLowerCase()===c || s.label.toLowerCase()===c);
-      return hit ? hit.key : fallbackRole();
-    };
-    S.tasks = d.connected ? (d.tasks||[]).map((t,i)=>(
-      {id:t.id||i,title:t.title||t.name,role:catToRole(t.category),due:t.due_date||t.due||'',done:t.status?t.status==='done':!!(t.done||t.completed)}
-    )) : null;
+    S.tasks = d.connected ? (d.tasks||[]).map(t=>({
+      id:t.id, title:t.title, source:t.source,
+      role:t.space || fallbackRole(),
+      due:t.due_date||'', done:t.status==='done',
+      overdue:!!t.is_overdue, dueSoon:!!t.is_due_soon,
+      notes:t.notes||'', synced:t.synced!==false, pushError:t.push_error||null,
+    })) : null;
   } catch(_){ S.tasksConnected=false; S.tasks=null; }
 }
+
+const SOURCE_LABEL = { charliework:'Work', goosework:'Personal' };
 const events = () => S.events || demoEvents();
 const tasks = () => S.tasks || demoTasks();
 const isDemoTasks = () => !S.tasksConnected;
@@ -404,16 +413,34 @@ function calendarView(){
 }
 
 function tasksView(){
-  const ts = tasks().filter(t=>inRole(t.role));
-  return `<div class="dhead"><div><div class="sub">${S.role==='All'?'All spaces':esc(roleLabel(S.role))+' space'}${isDemoTasks()?' · demo':''}</div><div class="ttl">Tasks</div></div></div>
-    ${chips()}
-    ${!S.tasksConnected?`<div class="pending" style="margin:8px 0 14px"><div class="s">Showing sample tasks. Connect charliework to manage real ones.</div></div>`:''}
-    <div style="display:flex;flex-direction:column;gap:9px">${ts.map(t=>`
-      <div class="task${t.done?' done':''}" data-task="${t.id}">
+  const all = tasks();
+  const ts = all.filter(t=>inRole(t.role)).filter(t=>S.taskSource==='All'||!S.taskSource||t.source===S.taskSource);
+  const c = S.taskCounts;
+  const srcChips = S.tasksConnected ? `<div class="chips">${
+    [['All','All'],['charliework','Work'],['goosework','Personal']].map(([k,l])=>{
+      const active=(S.taskSource||'All')===k;
+      const n = k==='All' ? (c?c.open:all.length) : (c&&c.by_source?c.by_source[k]||0:0);
+      return `<button class="chip${active?' active':''}" style="${active?`background:${ACCENT}`:''}" data-tsrc="${k}">${l}${S.tasksConnected?` · ${n}`:''}</button>`;
+    }).join('')}</div>` : '';
+
+  return `<div class="dhead"><div><div class="sub">${
+      c ? `${c.open} open${c.overdue?` · ${c.overdue} overdue`:''}` : (isDemoTasks()?'demo':'')
+    }</div><div class="ttl">Tasks</div></div></div>
+    ${srcChips}
+    ${!S.tasksConnected?`<div class="pending" style="margin:8px 0 14px"><div class="s">Showing sample tasks. No task system is connected.</div></div>`:''}
+    ${S.tasksUnsynced?`<div class="pending" style="margin:8px 0 14px"><div class="s">${S.tasksUnsynced} change${S.tasksUnsynced===1?'':'s'} not yet pushed to the source system. Retrying.</div></div>`:''}
+    <div class="task-list">${ts.map(t=>`
+      <div class="task${t.done?' done':''}" data-task="${esc(t.id)}">
         <span class="box${t.done?' done':''}">${t.done?'✓':''}</span>
-        <div style="flex:1"><div class="t">${esc(t.title)}</div>${t.due?`<div class="due">${esc(t.due)}</div>`:''}</div>
-        <span class="role-tag" style="color:${rc(t.role)};border-color:${rc(t.role)}">${esc(roleLabel(t.role))}</span>
-      </div>`).join('')}</div>`;
+        <div style="flex:1;min-width:0">
+          <div class="t">${esc(t.title)}</div>
+          <div class="due">${[
+            t.due ? (t.overdue?`Overdue · ${esc(t.due)}`:esc(t.due)) : '',
+            t.synced ? '' : (t.pushError ? 'not synced' : 'syncing…'),
+          ].filter(Boolean).join(' · ')}</div>
+        </div>
+        <span class="src-tag${t.source==='goosework'?' personal':''}">${esc(SOURCE_LABEL[t.source]||t.source||'')}</span>
+      </div>`).join('') || '<div class="empty">Nothing here.</div>'}</div>`;
 }
 
 function spacesView(){
@@ -542,7 +569,20 @@ document.addEventListener('click', e=>{
   if(t.dataset.role){ S.role=t.dataset.role; render(); return; }
   if(t.dataset.detail){ S.detail=t.dataset.detail; render(); return; }
   if(t.dataset.space){ S.role=t.dataset.space; S.tab='home'; S.detail=null; S.drawer=false; render(); return; }
-  if(t.dataset.task){ const id=t.dataset.task; const arr=tasks(); const tk=arr.find(x=>String(x.id)===id); if(tk){ tk.done=!tk.done; if(S.tasksConnected) api('/tasks/'+id,{method:'PATCH',body:JSON.stringify({status:tk.done?'done':'open'})}).catch(()=>{}); } render(); return; }
+  if(t.dataset.tsrc){ S.taskSource=t.dataset.tsrc; render(); return; }
+  if(t.dataset.task){
+    const id=t.dataset.task, tk=tasks().find(x=>String(x.id)===id);
+    if(tk){
+      tk.done=!tk.done;
+      if(S.tasksConnected){
+        tk.synced=false;
+        api('/tasks/'+encodeURIComponent(id),{method:'PATCH',body:JSON.stringify({status:tk.done?'done':'open'})})
+          .then(r=>{ tk.synced=r&&r.synced!==false; tk.pushError=(r&&r.push_error)||null; loadTasks().then(render); })
+          .catch(()=>{ tk.pushError='could not reach the task system'; render(); });
+      }
+    }
+    render(); return;
+  }
   if(t.dataset.confirm){ confirmPending(Number(t.dataset.confirm)); return; }
   if(t.dataset.cancel){ cancelPending(Number(t.dataset.cancel)); return; }
   if(t.dataset.suggest){ send(t.dataset.suggest); return; }

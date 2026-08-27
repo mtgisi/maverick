@@ -51,7 +51,9 @@ async function patchTask(id, fields) {
 }
 
 const completeTask = (id) => patchTask(id, { status: 'done' });
+const reopenTask = (id) => patchTask(id, { status: 'open' });
 const rescheduleTask = (id, due_date) => patchTask(id, { due_date });
+const setNotes = (id, notes) => patchTask(id, { notes });
 
 // File a question for the supervisor (Ask Supervisor).
 async function askSupervisor({ body, context, task_id }) {
@@ -60,6 +62,7 @@ async function askSupervisor({ body, context, task_id }) {
 }
 
 module.exports = {
-  CATEGORIES, listTasks, addTask, patchTask, completeTask, rescheduleTask, askSupervisor,
+  CATEGORIES, listTasks, addTask, patchTask, completeTask, reopenTask, rescheduleTask,
+  setNotes, askSupervisor,
   enabled: () => charliework.enabled,
 };

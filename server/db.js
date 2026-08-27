@@ -66,6 +66,42 @@ db.exec(`
     sort INTEGER DEFAULT 0
   );
 
+  -- Unified task mirror across charliework and goosework.
+  --
+  -- Mirrored rather than proxied so the merged list is fast, works when an origin is slow,
+  -- and can be queried without two network round trips. The cost is real sync machinery,
+  -- which lives in server/services/tasks.js. Rules there, not here:
+  --   origin wins on conflict UNLESS dirty=1 (a local edit not yet pushed)
+  --   a row absent from its origin for two consecutive SUCCESSFUL pulls is deleted locally
+  --   the UI never hides sync state; an unpushed edit says so
+  CREATE TABLE IF NOT EXISTS tasks (
+    id           TEXT PRIMARY KEY,          -- 'cw:<origin id>' | 'gw:<origin id>'
+    source       TEXT NOT NULL,             -- 'charliework' | 'goosework'
+    source_id    TEXT NOT NULL,
+    title        TEXT NOT NULL,
+    notes        TEXT,
+    status       TEXT NOT NULL DEFAULT 'open',
+    priority     INTEGER,
+    due_date     TEXT,                      -- YYYY-MM-DD
+    category     TEXT,
+    space        TEXT,                      -- maverick space key, mapped from category
+    parent_id    TEXT,
+    is_overdue   INTEGER DEFAULT 0,
+    is_due_soon  INTEGER DEFAULT 0,
+    flags        TEXT,                      -- JSON: pinned, blocked, awaiting_review, tier
+    created_at   TEXT,
+    updated_at   TEXT,
+    completed_at TEXT,
+    synced_at    TEXT,
+    misses       INTEGER NOT NULL DEFAULT 0,-- consecutive successful pulls this row was absent from
+    dirty        INTEGER NOT NULL DEFAULT 0,-- 1 = local edit awaiting write-through
+    dirty_fields TEXT,                      -- JSON of the pending change
+    push_error   TEXT                       -- last write-through failure, surfaced in the UI
+  );
+  CREATE INDEX IF NOT EXISTS idx_tasks_source ON tasks(source, source_id);
+  CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status, due_date);
+  CREATE INDEX IF NOT EXISTS idx_tasks_dirty ON tasks(dirty) WHERE dirty=1;
+
   -- Conversation history. Under the Claude Code brain this lived inside the CLI's own
   -- session (replayed with --resume). The local brain has no such thing, so Maverick keeps
   -- its own transcript and assembles the context window itself (LOCAL-BRAIN-SPEC 8.4).

@@ -61,7 +61,13 @@ function demoEvents(){
     ['2:00','Afternoon check-in','Quick sync'],
     ['5:30','Wrap up the day',''],
   ];
-  return rows.map((r,i)=>({time:r[0],title:r[1],sub:(r[2]?r[2]+' · ':'')+sp[i%sp.length].label,role:sp[i%sp.length].key}));
+  // Real timestamps for today, so the lead card's now/next logic behaves in demo mode too.
+  const at = (h,m)=>{ const d=new Date(); d.setHours(h,m,0,0); return d.toISOString(); };
+  const hm = [[9,0],[12,30],[14,0],[17,30]];
+  return rows.map((r,i)=>({
+    time:r[0], title:r[1], sub:(r[2]?r[2]+' · ':'')+sp[i%sp.length].label, role:sp[i%sp.length].key,
+    start:at(hm[i][0],hm[i][1]), end:at(hm[i][0]+1,hm[i][1]), allDay:false,
+  }));
 }
 
 const S = {
@@ -101,7 +107,11 @@ async function loadEvents(){
   try {
     const d = await api('/calendar');
     S.eventsConnected = !!d.connected;
-    S.events = d.connected ? (d.events||[]).filter(e=>!e.error).map(e=>({time:e.time||'all day',title:e.title,sub:(e.location||e.account||''),role:S.role==='All'?'Personal':S.role})) : null;
+    S.events = d.connected ? (d.events||[]).filter(e=>!e.error).map(e=>({
+      time:e.time||'all day', title:e.title, sub:(e.location||e.account||''),
+      start:e.start||null, end:e.end||null, allDay:!!e.allDay,
+      role:S.role==='All'?'Personal':S.role,
+    })) : null;
   } catch(_){ S.eventsConnected=false; S.events=null; }
 }
 // Tasks come from the unified mirror (charliework + goosework), already merged and sorted
@@ -191,6 +201,12 @@ async function send(text){
           S.thinking=false; S.streaming+=ev.text;
           const b=liveBubble(); if(b){ b.innerHTML=md(S.streaming); scrollChat(); }
           const t=document.querySelector('#chatScroll .typing'); if(t) t.remove();
+        } else if(ev.type==='discard'){
+          // The server threw away what it had streamed (it answered without checking, and
+          // is now fetching the real data). Clear the partial text so the invented version
+          // never stays on screen.
+          S.streaming=''; S.thinking=true;
+          const b=document.getElementById('liveBubble'); if(b) b.parentElement.remove();
         } else if(ev.type==='tool_start'){
           S.tool=ev.tool; setToolHint(toolLabel(ev.tool));
         } else if(ev.type==='tool_end'){
@@ -350,16 +366,56 @@ function chips(){
   }).join('')}</div>`;
 }
 
+/* What the lead card should be about, given the time of day.
+   Previously this was events[0], the first event of the DAY, so at four in the afternoon it
+   still offered to help you prep a 7:50 AM meeting. An event is only worth leading with if
+   it is happening now or has not started yet. */
+function leadEvent(list){
+  const now = Date.now();
+  const t = v => { const n = v ? Date.parse(v) : NaN; return Number.isFinite(n) ? n : null; };
+
+  // All-day entries have no clock time, so they are context for the day rather than a
+  // "right now". They lead only when there is nothing timed left.
+  const timed = list.filter(e => !e.allDay && t(e.start));
+
+  const current = timed.find(e => {
+    const s = t(e.start), en = t(e.end);
+    return s <= now && (en ? en > now : now - s < 60 * 60 * 1000);   // no end: assume an hour
+  });
+  if (current) return { ev: current, state: 'now' };
+
+  const upcoming = timed.filter(e => t(e.start) > now).sort((a, b) => t(a.start) - t(b.start))[0];
+  if (upcoming) return { ev: upcoming, state: 'next' };
+
+  const allDay = list.find(e => e.allDay);
+  if (allDay) return { ev: allDay, state: 'today' };
+
+  return { ev: null, state: timed.length ? 'done' : 'clear' };
+}
+
 function homeView(){
   const ev = events().filter(e=>inRole(e.role));
-  const next = ev[0];
+  const { ev: next, state } = leadEvent(ev);
   const due = tasks().filter(t=>!t.done && inRole(t.role)).length;
-  const leadTitle = next ? `${next.title}` : 'Nothing urgent right now';
-  const leadSub = next ? `${next.time} · ${next.sub}` : 'Your day is clear. Ask me to plan something.';
+
+  const KICKER = { now:'Happening now', next:'Next up', today:'Today', done:'Rest of the day', clear:'Right now' };
+  const leadTitle = next ? next.title
+    : state==='done' ? "That's your day done"
+    : 'Nothing urgent right now';
+  const leadSub = next ? [next.time, next.sub].filter(Boolean).join(' · ')
+    : state==='done' ? `Nothing else scheduled.${due?` ${due} task${due===1?'':'s'} still open.`:''}`
+    : 'Your day is clear. Ask me to plan something.';
+
+  // Only offer to prep something that has not happened yet.
+  const action = state==='next' ? ['chat-prep','Start prep']
+    : state==='now' ? null
+    : due ? ['chat-plan','Plan my tasks']
+    : ['chat-plan','Plan my day'];
+
   return `
   ${headerHTML()}
   <div class="lead">
-    <div class="now"><span class="dot"></span><span class="t">Right now${S.role!=='All'?' · '+esc(roleLabel(S.role)):''}</span></div>
+    <div class="now"><span class="dot"></span><span class="t">${KICKER[state]}${S.role!=='All'?' · '+esc(roleLabel(S.role)):''}</span></div>
     <h2>${esc(leadTitle)}</h2>
     <p>${esc(leadSub)}</p>
     ${S.whyOpen?`<div class="why">
@@ -367,15 +423,15 @@ function homeView(){
       <div class="row"><b>◆</b><span>${due} task${due===1?'':'s'} due — I can reprioritize on request.</span></div>
     </div>`:''}
     <div class="actions">
-      <button class="btn" data-act="chat-plan">Start prep</button>
+      ${action?`<button class="btn" data-act="${action[0]}">${action[1]}</button>`:''}
       <button class="btn ghost" data-act="why">${S.whyOpen?'Hide reasoning':'Why this?'}</button>
     </div>
   </div>
   ${chips()}
   <div class="grid">
     <div class="card span2" data-go="calendar" style="display:flex;justify-content:space-between;align-items:center">
-      <div><div class="k">Next up${next?' · '+esc(next.time):''}</div>
-        <div style="font-size:15.5px;color:var(--ink);font-weight:600">${esc(next?next.title:'No events')}</div>
+      <div><div class="k">${KICKER[state]}${next&&next.time?' · '+esc(next.time):''}</div>
+        <div style="font-size:15.5px;color:var(--ink);font-weight:600">${esc(next?next.title:(state==='done'?'Nothing else today':'No events'))}</div>
         <div style="font-size:12px;color:var(--muted);margin-top:2px">${esc(next?next.sub:'')}${isDemoEvents()?'<span class="demo-tag">demo</span>':''}</div></div>
       <span style="width:30px;height:30px;border-radius:50%;border:1px solid rgba(207,159,90,.4);color:#cf9f5a;display:flex;align-items:center;justify-content:center">→</span>
     </div>
@@ -635,6 +691,7 @@ function drawerHTML(){
     ${acctRows}
     <a class="drawer-item" href="/connect/google?account=personal"><span class="sw" style="background:var(--gold)"></span><span class="l">Connect personal Gmail / Calendar</span><span class="r">→</span></a>
     <a class="drawer-item" href="/connect/google?account=work"><span class="sw" style="background:#6fa195"></span><span class="l">Connect work Gmail / Calendar</span><span class="r">→</span></a>
+    <div class="drawer-item" data-act="clear-chat"><span class="sw" style="background:#cf8a6a"></span><span class="l">Clear chat history</span><span class="r">↺</span></div>
     <div class="drawer-item" data-detail="calendars"><span class="sw" style="background:var(--sage)"></span><span class="l">Calendars</span><span class="r">→</span></div>
     <div class="g">Integrations</div>
     ${[['Timeclock',feat.timeclock],['Tasks (charliework)',feat.tasks],['Bookmarks',feat.bookmarks],['Containers',feat.containers]].map(([n,on])=>`<div class="drawer-item" style="cursor:default"><span class="sw" style="background:${on?'var(--sage)':'var(--dim)'}"></span><span class="l">${n}</span><span class="r">${on?'On':'Off'}</span></div>`).join('')}
@@ -693,6 +750,20 @@ document.addEventListener('click', e=>{
   else if(a==='conv'){ toggleConversation(); }
   else if(a==='send'){ const inp=document.getElementById('chatInput'); S.chatInput=inp?inp.value:''; send(); }
   else if(a==='chat-plan'){ send('Plan my day and tell me what to start with.'); }
+  else if(a==='clear-chat'){
+    if(confirm('Clear this conversation?\nThe assistant forgets what was said; your memories, tasks and reminders are untouched.')){
+      api('/chat/history',{method:'DELETE',body:JSON.stringify({conversation_id:S.conv})})
+        .catch(()=>{})
+        .then(()=>{ S.messages=[]; S.pending=[]; S.streaming=''; S.drawer=false; render(); });
+    }
+  }
+  else if(a==='chat-prep'){
+    // Prep the NEXT event specifically, not "the day", so the reply is about the thing the
+    // card is showing.
+    const { ev } = leadEvent(events().filter(x=>inRole(x.role)));
+    send(ev ? `Help me prepare for "${ev.title}" at ${ev.time}. What should I have ready?`
+            : 'Plan my day and tell me what to start with.');
+  }
   else if(a==='install'){ if(deferredPrompt){ deferredPrompt.prompt(); deferredPrompt=null; } else alert('Use your browser menu → Add to Home Screen.'); }
 });
 // Hold-to-dictate. Delegated pointer events on document, so the handler survives the

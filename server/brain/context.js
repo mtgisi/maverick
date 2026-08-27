@@ -54,12 +54,28 @@ function history(conversationId, { maxTurns = brain.historyTurns, maxTokens = BU
     ORDER BY id DESC LIMIT ?
   `).all(conversationId, upto, maxTurns * 6).reverse();
 
-  // Trim from the front until inside budget, but never start on a role:'tool' message: a
-  // tool result whose originating assistant call is gone confuses the model badly.
-  let out = rows;
-  const cost = list => list.reduce((n, r) => n + estTokens(r.content) + estTokens(r.tool_calls), 0);
+  // Tool results NEVER cross a turn boundary.
+  //
+  // A tool result is a snapshot of the world at the moment it ran, and replaying it later
+  // presents stale data as current. Observed: a calendar listing captured before per-calendar
+  // roles were applied stayed in the context, and the model kept answering from that old
+  // list, including events from calendars that had since been marked reference. The fresh
+  // tool call was made and then ignored in favour of the stale text sitting above it.
+  //
+  // Anything the assistant concluded from a tool result is already in its own reply, which
+  // IS kept. If a fact matters beyond the turn it belongs in memories, not in a transcript.
+  //
+  // Assistant turns that exist only to carry tool_calls go too: a call with no result is
+  // malformed, and its content is empty anyway.
+  const conversational = rows.filter(r => {
+    if (r.role === 'tool') return false;
+    if (r.role === 'assistant' && r.tool_calls && !(r.content || '').trim()) return false;
+    return (r.content || '').trim().length > 0;
+  }).map(r => ({ ...r, tool_calls: null }));
+
+  let out = conversational;
+  const cost = list => list.reduce((n, r) => n + estTokens(r.content), 0);
   while (out.length && cost(out) > maxTokens) out = out.slice(1);
-  while (out.length && out[0].role === 'tool') out = out.slice(1);
 
   return out.map(toOllamaMessage);
 }
@@ -155,6 +171,9 @@ async function maybeSummarize(conversationId, generate) {
 }
 
 function reset(conversationId) {
+  // Drop the carried tool groups too, or a cleared conversation still behaves as though it
+  // were mid-subject.
+  try { require('./gating').forget(conversationId); } catch (_) {}
   db.prepare('DELETE FROM messages WHERE conversation_id=?').run(conversationId);
   db.prepare('UPDATE conversations SET summary=NULL, summary_upto=NULL WHERE conversation_id=?')
     .run(conversationId);

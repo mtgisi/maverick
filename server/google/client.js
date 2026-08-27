@@ -142,6 +142,9 @@ async function listEvents({ account, date, calendarId, scope = 'mine', include =
             // BEFORE. Every birthday and menu entry was showing as "7:00 PM". All-day
             // events have no clock time, so do not invent one.
             const isAllDay = !!(ev.start && ev.start.date && !ev.start.dateTime);
+            // End time, so callers can tell "happening right now" from "already finished".
+            // Without it the home card offered to prep a 7:50 AM meeting at 4 in the afternoon.
+            const endISO = ev.end && (ev.end.dateTime || ev.end.date);
             all.push({
               id: ev.id,
               account: acctName,
@@ -151,6 +154,7 @@ async function listEvents({ account, date, calendarId, scope = 'mine', include =
               title: ev.summary || '(no title)',
               location: ev.location || '',
               start: startISO,
+              end: endISO || null,
               allDay: isAllDay,
               time: (!isAllDay && startISO)
                 ? new Date(startISO).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' })

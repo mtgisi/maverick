@@ -73,6 +73,18 @@ router.post('/', async (req, res) => {
   }
 });
 
+// DELETE /api/chat/history { conversation_id } — forget this conversation.
+//
+// Useful when a turn captured something now wrong: tool results no longer cross turns, but
+// the assistant's own replies do, and a reply that described the old state can still mislead.
+// Only the transcript goes. Memories, reminders, tasks and the audit trail are untouched.
+router.delete('/history', (req, res) => {
+  const conv = (req.body && req.body.conversation_id) || 'web';
+  require('../brain/context').reset(conv);
+  console.log(`[chat] cleared history for ${conv}`);
+  res.json({ ok: true, conversation_id: conv });
+});
+
 // GET /api/chat/status — brain reachability, for the PWA's offline state.
 router.get('/status', async (_req, res) => {
   try { res.json(await assistant.status()); }

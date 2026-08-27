@@ -330,6 +330,11 @@ class VoiceLoop {
               this.enqueueSpeech(reply.slice(spoken, spoken + cut));
               spoken += cut;
             }
+          } else if (ev.type === 'discard') {
+            // Server discarded the invented answer. Drop anything queued for speech that
+            // came from it, so it is never spoken.
+            reply = ''; spoken = 0;
+            this.audioQueue = [];
           } else if (ev.type === 'tool_start') {
             this.onState('working:' + ev.tool);
           } else if (ev.type === 'done') {

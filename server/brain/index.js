@@ -67,13 +67,16 @@ async function run(conversationId, message, opts = {}) {
   const toolsUsed = [];
   let rounds = 0;
   let stopped = null;
+  let nudged = false;
 
   while (rounds < brain.maxRounds) {
     if (Date.now() > deadline) { stopped = 'timeout'; break; }
     rounds++;
 
-    const { groups, tools } = gating.select(message, { sticky });
+    const { groups, tools, matched } = gating.select(message, { sticky, conversationId });
     const ollamaTools = gating.toOllama(tools);
+    // Did this message itself ask about live data the model cannot know unaided?
+    const wantsData = matched.some(g => gating.DATA_GROUPS.includes(g));
 
     // Always stream when the caller wants streaming. LOCAL-BRAIN-SPEC 8.1 left open whether
     // tool calls survive stream:true and offered a non-streamed fallback for tool-carrying
@@ -92,6 +95,63 @@ async function run(conversationId, message, opts = {}) {
 
     if (!calls.length) {
       let reply = (assistant.content || '').trim();
+
+      // The model answered a live-data question without looking anything up. That answer is
+      // fabricated by construction, and it does happen: asked "and what about my afternoon"
+      // as a follow-up, qwen2.5:7b invented "a meeting with Dr. Jane Smith at 3:00 PM"
+      // while the calendar tools sat unused in front of it. Its own earlier reply is in the
+      // context and it continues the story rather than checking.
+      //
+      // The prompt already forbids this and the tools are already offered, so neither is
+      // the fix. Force one retry with the omission named. If it still will not call, the
+      // reply is discarded rather than shown: a plain "I could not check" is worth far more
+      // than a confident invented schedule.
+      if (wantsData && !toolsUsed.length && !nudged) {
+        nudged = true;
+        // Do not argue with it: fetch the data and hand it over.
+        //
+        // Asking again does not work. Told it had answered without checking, qwen2.5:7b
+        // simply produced a second invented schedule. So the loop runs the obvious
+        // read-only tool for the matched group itself and feeds the result back. The model
+        // then has real data in front of it and only has to phrase it.
+        //
+        // Read-only by construction: PRIMARY_READ maps to list/get tools only. Nothing that
+        // writes is ever invoked on the model's behalf.
+        const forced = [...new Set(matched
+          .map(g => gating.PRIMARY_READ[g])
+          .filter(Boolean))];
+
+        if (forced.length) {
+          if (emit) emit({ type: 'discard' });   // drop the invented text already streamed
+          for (const name of forced) {
+            if (emit) emit({ type: 'tool_start', tool: name });
+            const out = await dispatch(name, {}, {
+              conversationId, actor: 'system', surface, now: new Date(), tz: TZ,
+              resolvedTimes: hits,
+            });
+            const res = context.truncateToolResult(out.result);
+            toolsUsed.push({ tool: name, ok: out.ok, forced: true });
+            if (emit) emit({ type: 'tool_end', tool: name, ok: out.ok, preview: res.slice(0, 160) });
+            messages.push({ role: 'tool', content: res, tool_name: name });
+            context.append(conversationId, { role: 'tool', content: res, toolName: name });
+          }
+          messages.push({
+            role: 'system',
+            content: 'You answered without checking. The tool results above are the real, '
+              + 'current data. Answer again using ONLY those results. If they show nothing, '
+              + 'say there is nothing.',
+          });
+          console.log(`[brain] ${conversationId} forced ${forced.join(',')} after a no-tool answer`);
+          continue;
+        }
+
+        // No read tool exists for the matched group. Refusing beats inventing.
+        stopped = 'refused_to_call_tool';
+        if (emit) emit({ type: 'discard' });
+        reply = "I couldn't check that just now, so I'd rather not guess. Ask me again?";
+        console.warn(`[brain] ${conversationId} answered a data question with no tool available`);
+      }
+
       if (!reply) {
         // A 7B occasionally returns an empty assistant turn. Do not hand back silence.
         reply = "I didn't get that one out. Say it again?";

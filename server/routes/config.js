@@ -3,6 +3,7 @@ const cfg = require('../config');
 const oauth = require('../google/oauth');
 const timeclock = require('../integrations/timeclock');
 const charliework = require('../integrations/charliework');
+const goosework = require('../integrations/goosework');
 const bookmarks = require('../integrations/bookmarks');
 const containers = require('../integrations/containers');
 
@@ -24,13 +25,17 @@ router.get('/', (req, res) => {
     user: { name: u.name || '', email: u.email || '', initials: initials(u.name, u.email) },
     features: {
       timeclock: timeclock.enabled(),
-      tasks: charliework.enabled(),
+      tasks: charliework.enabled() || goosework.enabled(),
+      mail: cfg.mailRead,
       bookmarks: bookmarks.enabled(),
       containers: containers.enabled(),
       youtube: cfg.keyApisEnabled,
       maps: cfg.keyApisEnabled,
     },
     googleAccounts: oauth.listAccounts().map(a => ({ email: a.email, label: a.label })),
+    // Sleep/nutrition/finance tiles are hardcoded sample numbers. Off by default: fiction in
+    // the home grid crowds out the three real tiles and makes the screen less trustworthy.
+    showDemoTiles: String(process.env.SHOW_DEMO_TILES || '').toLowerCase() === 'true',
   });
 });
 

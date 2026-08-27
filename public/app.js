@@ -241,10 +241,6 @@ const TOOL_LABELS={
 };
 const toolLabel = n => TOOL_LABELS[n] || ('running '+String(n||'').replace(/_/g,' '));
 
-function setToolHint(text){
-  const el=document.getElementById('toolHint');
-  if(el){ el.textContent=text; el.style.display=text?'':'none'; }
-}
 /* ---------- spaces management ---------- */
 async function addSpace(){
   const label = (prompt('Name this space (e.g. Work, Family, Side project):')||'').trim();
@@ -336,25 +332,38 @@ async function toggleConversation(){
   S.convMode=!!ok; updateVoiceChrome();
 }
 
+// Six states, each visually distinct. "Listening" and "Speaking" look nothing alike,
+// because when you are deciding whether to keep talking that is the difference that matters.
 const VOICE_COPY={
-  listening:'Listening', transcribing:'Got it…', thinking:'Thinking',
-  speaking:'Speaking', dictating:'Dictating', idle:'',
+  listening:'Listening', dictating:'Dictating', transcribing:'Heard you',
+  thinking:'Thinking', speaking:'Speaking', idle:'',
 };
 
-// Targeted update, not a full render: the mic button must not be rebuilt while it is being
-// held down, or the pointerup never lands on the same element.
+function setToolHint(text){
+  const el=document.getElementById('toolHint');
+  if(!el) return;
+  el.textContent=text||'';
+  el.hidden=!text;
+}
+
+// Targeted update, not a full render: the mic button must not be rebuilt while it is held,
+// or the pointerup never lands on the same element.
 function updateVoiceChrome(){
   const badge=document.getElementById('voiceBadge');
-  const btn=document.getElementById('convBtn');
+  const conv=document.getElementById('convBtn');
   const mic=document.getElementById('micBtn');
-  const st=S.voiceState||'idle';
-  const label=S.voiceError || (st.startsWith('working:') ? toolLabel(st.slice(8)) : VOICE_COPY[st]||'');
+  const raw=S.voiceState||'idle';
+  const working=raw.startsWith('working:');
+  const state=S.voiceError?'error':(working?'thinking':raw);
+  const label=S.voiceError || (working?'Working':VOICE_COPY[raw]||'');
+
   if(badge){
     badge.textContent=label;
-    badge.className='voice-badge'+(S.voiceError?' err':'')+(st==='listening'?' live':'');
-    badge.style.display=(S.convMode||label)?'':'none';
+    badge.dataset.state=state;
+    badge.hidden=!label;
   }
-  if(btn) btn.className='conv-btn'+(S.convMode?' on':'');
+  if(working) setToolHint(toolLabel(raw.slice(8)));
+  if(conv) conv.className='conv-btn'+(S.convMode?' on':'');
   if(mic) mic.className='mic'+(S.dictating?' live':'');
 }
 
@@ -429,107 +438,152 @@ function homeView(){
   </div>
   ${chips()}
   <div class="grid">
-    <div class="card span2" data-go="calendar" style="display:flex;justify-content:space-between;align-items:center">
-      <div><div class="k">${KICKER[state]}${next&&next.time?' · '+esc(next.time):''}</div>
-        <div style="font-size:15.5px;color:var(--ink);font-weight:600">${esc(next?next.title:(state==='done'?'Nothing else today':'No events'))}</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:2px">${esc(next?next.sub:'')}${isDemoEvents()?'<span class="demo-tag">demo</span>':''}</div></div>
-      <span style="width:30px;height:30px;border-radius:50%;border:1px solid rgba(207,159,90,.4);color:#cf9f5a;display:flex;align-items:center;justify-content:center">→</span>
+    <div class="card span2 row-between" data-go="calendar">
+      <div>
+        <div class="k">${KICKER[state]}${next&&next.time?' \u00b7 '+esc(next.time):''}</div>
+        <div class="v">${esc(next?next.title:(state==='done'?'Nothing else today':'No events'))}</div>
+        <div class="m">${esc(next?next.sub:'')}${isDemoEvents()?' \u00b7 demo':''}</div>
+      </div>
+      <span class="arrow">&rarr;</span>
     </div>
-    <div class="card" data-go="tasks"><div class="k">Tasks</div>
-      <div style="display:flex;align-items:baseline;gap:6px"><span class="bignum">${due}</span><span style="font-size:12px;color:var(--muted)">due${isDemoTasks()?' · demo':''}</span></div></div>
-    <div class="card" data-detail="notifications"><div class="k">Notifications</div>
-      <div style="display:flex;align-items:baseline;gap:6px"><span class="bignum" style="color:var(--ink)">${S.pending.length}</span><span style="font-size:12px;color:#cf9f5a">${S.pending.length?'need you':'all clear'}</span></div></div>
-    <div class="card" data-detail="sleep"><div class="k">Sleep <span class="demo-tag">demo</span></div>
-      <div class="mono" style="font-size:18px;color:var(--ink)">7h 12m</div><div style="font-size:11.5px;color:var(--sage);margin-top:3px">+24m vs avg</div></div>
-    <div class="card" data-detail="nutrition"><div class="k">Nutrition <span class="demo-tag">demo</span></div>
-      <div class="mono" style="font-size:14px;color:var(--ink)">1,240<span style="color:var(--faint);font-size:11px"> / 2,100</span></div>
-      <div class="bar"><span style="width:59%"></span></div></div>
-    <div class="card" data-detail="finance"><div class="k">Finance · week <span class="demo-tag">demo</span></div>
-      <div class="mono" style="font-size:18px;color:var(--sage)">$214</div><div style="font-size:11.5px;color:var(--muted);margin-top:3px">left to spend</div></div>
-    <div class="card span2" data-go="spaces" style="background:linear-gradient(120deg,rgba(156,169,128,.12),rgba(255,255,255,.03));border-color:rgba(156,169,128,.22);display:flex;justify-content:space-between;align-items:center">
-      <div><div class="k" style="color:var(--sage)">Spaces</div><div style="font-size:15.5px;color:var(--ink);font-weight:600">${S.spaces.length} context${S.spaces.length===1?'':'s'} · scope your day</div></div>
-      <span class="mono" style="font-size:24px;color:var(--sage)">${S.spaces.length}</span></div>
+    <div class="card" data-go="tasks">
+      <div class="k">Tasks</div>
+      <div class="v"><span class="bignum">${due}</span></div>
+      <div class="m">due${isDemoTasks()?' \u00b7 demo':''}</div>
+    </div>
+    <div class="card" data-detail="notifications">
+      <div class="k">Needs you</div>
+      <div class="v"><span class="bignum">${S.pending.length}</span></div>
+      <div class="m">${S.pending.length?'awaiting confirmation':'all clear'}</div>
+    </div>
+    ${demoTiles()}
+    <div class="card span2 row-between" data-go="spaces" style="background:linear-gradient(120deg,rgba(156,169,128,.12),rgba(255,255,255,.03));border-color:rgba(156,169,128,.22)">
+      <div>
+        <div class="k" style="color:var(--sage)">Spaces</div>
+        <div class="v">${S.spaces.length} context${S.spaces.length===1?'':'s'}</div>
+        <div class="m">Scope the day to one of them</div>
+      </div>
+      <span class="bignum" style="color:var(--sage)">${S.spaces.length}</span>
+    </div>
   </div>`;
 }
 
+// Sleep, nutrition and finance were hardcoded sample numbers filling half the home grid
+// with fiction, which crowded out the three real tiles and made the whole screen less
+// trustworthy. Off unless SHOW_DEMO_TILES is set.
+function demoTiles(){
+  if(!(S.cfg && S.cfg.showDemoTiles)) return '';
+  return `
+    <div class="card" data-detail="sleep"><div class="k">Sleep \u00b7 demo</div>
+      <div class="v mono">7h 12m</div><div class="m" style="color:var(--sage)">+24m vs avg</div></div>
+    <div class="card" data-detail="nutrition"><div class="k">Nutrition \u00b7 demo</div>
+      <div class="v mono">1,240 <span style="color:var(--faint)">/ 2,100</span></div>
+      <div class="bar"><span style="width:59%"></span></div></div>
+    <div class="card" data-detail="finance"><div class="k">Finance \u00b7 demo</div>
+      <div class="v mono" style="color:var(--sage)">$214</div><div class="m">left this week</div></div>`;
+}
+
 function headerHTML(){
+  // The temperature and condition were hardcoded "72 / Sunny". Invented data in the first
+  // place you look is worse than none, so it is gone until a weather source exists.
   return `<div class="head">
-    <div><div class="date">${esc(todayStr())}</div><div class="greet">${greeting()}${S.cfg&&S.cfg.user.name?', '+esc(S.cfg.user.name.split(' ')[0]):''}</div></div>
-    <div class="right"><div><div class="temp">72°</div><div class="cond">Sunny</div></div>
-      <button class="avatar" data-act="settings">${esc(initials())}</button></div>
+    <div>
+      <div class="date">${esc(todayStr())}</div>
+      <div class="greet">${greeting()}${S.cfg&&S.cfg.user.name?', '+esc(S.cfg.user.name.split(' ')[0]):''}</div>
+    </div>
+    <button class="avatar" data-act="settings">${esc(initials())}</button>
   </div>`;
 }
 
 function calendarView(){
   const ev = events().filter(e=>inRole(e.role));
-  return `<div class="dhead" style="justify-content:space-between"><div><div class="sub">Today</div><div class="ttl">${esc(todayStr())}</div></div>
-    <div style="font-size:12px;color:var(--muted)">${S.role==='All'?'All spaces':esc(roleLabel(S.role))+' space'}${isDemoEvents()?' · demo':''}</div></div>
-    ${!S.eventsConnected?`<div class="pending" style="margin-bottom:14px"><div class="s">Connect a Google account to see your real calendar.</div><div class="a"><a class="btn" href="/connect/google?account=personal">Connect Google</a></div></div>`:''}
-    <div class="agenda">${ev.map(e=>`<div class="ev"><div class="time">${esc(e.time)}</div>
-      <div class="body" style="border-left-color:${rc(e.role)}"><div class="t">${esc(e.title)}</div><div class="s">${esc(e.sub)}</div></div></div>`).join('')||'<div style="color:var(--muted);padding:20px">No events.</div>'}</div>`;
+  return `<div class="dhead">
+      <div class="grow">
+        <div class="sub">${S.role==='All'?'All spaces':esc(roleLabel(S.role))+' space'}${isDemoEvents()?' \u00b7 demo':''}</div>
+        <div class="ttl">${esc(todayStr())}</div>
+      </div>
+    </div>
+    ${!S.eventsConnected?`<div class="pending"><div class="s">Connect a Google account to see your real calendar.</div><div class="a"><a class="btn" href="/connect/google?account=personal">Connect Google</a></div></div>`:''}
+    <div class="agenda">${ev.map(e=>`<div class="ev">
+      <div class="time">${esc(e.time)}</div>
+      <div class="body" style="border-left-color:${rc(e.role)}">
+        <div class="t">${esc(e.title)}</div><div class="s">${esc(e.sub)}</div>
+      </div></div>`).join('')||'<div class="empty">Nothing scheduled.</div>'}</div>`;
 }
 
 function tasksView(){
   const all = tasks();
-  const ts = all.filter(t=>inRole(t.role)).filter(t=>S.taskSource==='All'||!S.taskSource||t.source===S.taskSource);
+  const ts = all.filter(t=>inRole(t.role)).filter(t=>!S.taskSource||S.taskSource==='All'||t.source===S.taskSource);
   const c = S.taskCounts;
   const srcChips = S.tasksConnected ? `<div class="chips">${
     [['All','All'],['charliework','Work'],['goosework','Personal']].map(([k,l])=>{
       const active=(S.taskSource||'All')===k;
       const n = k==='All' ? (c?c.open:all.length) : (c&&c.by_source?c.by_source[k]||0:0);
-      return `<button class="chip${active?' active':''}" style="${active?`background:${ACCENT}`:''}" data-tsrc="${k}">${l}${S.tasksConnected?` · ${n}`:''}</button>`;
+      return `<button class="chip${active?' active':''}" style="${active?`background:${ACCENT}`:''}" data-tsrc="${k}">${l} \u00b7 ${n}</button>`;
     }).join('')}</div>` : '';
 
-  return `<div class="dhead"><div><div class="sub">${
-      c ? `${c.open} open${c.overdue?` · ${c.overdue} overdue`:''}` : (isDemoTasks()?'demo':'')
-    }</div><div class="ttl">Tasks</div></div></div>
+  return `<div class="dhead">
+      <div class="grow">
+        <div class="sub">${c ? `${c.open} open${c.overdue?` \u00b7 ${c.overdue} overdue`:''}` : (isDemoTasks()?'demo':'')}</div>
+        <div class="ttl">Tasks</div>
+      </div>
+    </div>
     ${srcChips}
-    ${!S.tasksConnected?`<div class="pending" style="margin:8px 0 14px"><div class="s">Showing sample tasks. No task system is connected.</div></div>`:''}
-    ${S.tasksUnsynced?`<div class="pending" style="margin:8px 0 14px"><div class="s">${S.tasksUnsynced} change${S.tasksUnsynced===1?'':'s'} not yet pushed to the source system. Retrying.</div></div>`:''}
+    ${!S.tasksConnected?`<div class="pending"><div class="s">Showing sample tasks. No task system is connected.</div></div>`:''}
+    ${S.tasksUnsynced?`<div class="pending"><div class="s">${S.tasksUnsynced} change${S.tasksUnsynced===1?'':'s'} not yet pushed to the source system. Retrying.</div></div>`:''}
     <div class="task-list">${ts.map(t=>`
       <div class="task${t.done?' done':''}" data-task="${esc(t.id)}">
-        <span class="box${t.done?' done':''}">${t.done?'✓':''}</span>
-        <div style="flex:1;min-width:0">
+        <span class="box${t.done?' done':''}">${t.done?'\u2713':''}</span>
+        <div class="body">
           <div class="t">${esc(t.title)}</div>
           <div class="due">${[
-            t.due ? (t.overdue?`Overdue · ${esc(t.due)}`:esc(t.due)) : '',
-            t.synced ? '' : (t.pushError ? 'not synced' : 'syncing…'),
-          ].filter(Boolean).join(' · ')}</div>
+            t.due ? (t.overdue?`Overdue \u00b7 ${esc(t.due)}`:esc(t.due)) : '',
+            t.synced ? '' : (t.pushError ? 'not synced' : 'syncing\u2026'),
+          ].filter(Boolean).join(' \u00b7 ')}</div>
         </div>
-        <span class="src-tag${t.source==='goosework'?' personal':''}">${esc(SOURCE_LABEL[t.source]||t.source||'')}</span>
+        ${t.source?`<span class="src-tag${t.source==='goosework'?' personal':''}">${esc(SOURCE_LABEL[t.source]||t.source)}</span>`:''}
       </div>`).join('') || '<div class="empty">Nothing here.</div>'}</div>`;
 }
 
 function spacesView(){
   const list = S.spaces;
-  return `<div class="dhead" style="justify-content:space-between;align-items:flex-start">
-      <div><div class="sub">Your roles & contexts</div><div class="ttl">Spaces</div></div>
-      <button class="btn" data-space-add style="padding:7px 12px;font-size:13px">+ Add space</button></div>
-    <p style="font-size:13px;color:var(--muted);margin:-8px 2px 14px;line-height:1.5">Spaces are yours to define — each one pulls its own tasks, events, notes and notifications into the shared modules. Add, rename or remove them anytime.</p>
-    ${list.length?`<div class="grid" style="grid-template-columns:1fr 1fr">${list.map(s=>`
-      <div class="space" data-space="${esc(s.key)}" style="border-top-color:${s.color};position:relative">
+  return `<div class="dhead">
+      <div class="grow"><div class="sub">Your roles and contexts</div><div class="ttl">Spaces</div></div>
+      <button class="btn sm" data-space-add>+ Add</button>
+    </div>
+    <p class="cal-intro">Spaces are yours to define. Each one pulls its own tasks, events and
+      notes into the shared modules. Add, rename or remove them anytime.</p>
+    ${list.length?`<div class="grid">${list.map(s=>`
+      <div class="space" data-space="${esc(s.key)}" style="border-top-color:${s.color}">
         <div class="space-tools">
-          <button data-space-edit="${esc(s.key)}" title="Rename">✎</button>
-          <button data-space-del="${esc(s.key)}" title="Delete">✕</button>
+          <button data-space-edit="${esc(s.key)}" title="Rename">\u270e</button>
+          <button data-space-del="${esc(s.key)}" title="Delete">\u2715</button>
         </div>
         <div class="sw" style="background:${s.color}"></div>
         <div class="l">${esc(s.label)}</div>
-        <div class="m">${s.memories||0} memories · ${s.notes||0} notes</div></div>`).join('')}</div>`
-      :`<div style="color:var(--muted);padding:22px 4px">No spaces yet. Tap <b>+ Add space</b> to create your first context.</div>`}`;
+        <div class="m">${s.memories||0} memories \u00b7 ${s.notes||0} notes</div>
+      </div>`).join('')}</div>`
+      :`<div class="empty">No spaces yet. Tap <b>+ Add</b> to create your first context.</div>`}`;
 }
 
 function chatView(){
-  const suggestions = ['Summarize my day','Draft an email','What needs me?'];
+  const suggestions = ['What is on my calendar','What should I work on','Any unread email'];
+  const brandName = esc(brand());
   return `<div class="chat">
-    <div class="who"><span class="a compass-mark"></span><div><div style="font-size:15px;color:var(--ink);font-weight:700;font-family:var(--serif)">${esc(brand())}</div>
-      <div style="font-size:11px;color:var(--sage)">Online · ${S.role==='All'?'all spaces':'scoped to '+esc(roleLabel(S.role))}</div></div></div>
-    <div style="flex:1;display:flex;flex-direction:column;gap:12px" id="chatScroll">
-      ${S.messages.length?'':`<div class="msg ai"><div class="bubble">Hey — I'm ${esc(brand())}. Ask me to plan your day, draft an email, check your calendar, or adjust your timeclock.</div></div>`}
+    <div class="who">
+      <span class="a compass-mark"></span>
+      <div class="grow">
+        <div class="n">${brandName}</div>
+        <div class="s">${S.convMode?'Conversation mode':'Online'} \u00b7 ${S.role==='All'?'all spaces':'scoped to '+esc(roleLabel(S.role))}</div>
+      </div>
+    </div>
+    <div class="thread" id="chatScroll">
+      ${S.messages.length?'':`<div class="msg ai"><div class="bubble">Hey. Ask me to plan your day, check your calendar, draft an email, or look at your tasks.</div></div>`}
       ${S.messages.map(m=>`<div class="msg ${m.from==='user'?'user':'ai'}"><div class="bubble">${m.from==='user'?esc(m.text):md(m.text)}</div></div>`).join('')}
       ${S.thinking?`<div class="typing"><span></span><span></span><span></span></div>`:''}
       ${S.pending.map(p=>`<div class="pending"><div class="s">${esc(p.summary)}</div><div class="a"><button class="btn" data-confirm="${p.id}">Confirm</button><button class="btn ghost" data-cancel="${p.id}">Cancel</button></div></div>`).join('')}
+      ${S.messages.length?'':`<div class="suggest">${suggestions.map(x=>`<span data-suggest="${esc(x)}">${esc(x)}</span>`).join('')}</div>`}
     </div>
-    <div class="suggest">${suggestions.map(s=>`<span data-suggest="${esc(s)}">${esc(s)}</span>`).join('')}</div>
   </div>`;
 }
 
@@ -558,8 +612,10 @@ async function setCalendarMode(account, id, mode, label){
 
 function calendarsView(){
   const d = S.calendars;
-  const back = `<div class="dhead"><button class="back" data-act="back">←</button>
-    <div><div class="sub">Settings</div><div class="ttl">Calendars</div></div></div>`;
+  const back = `<div class="dhead">
+    <button class="back" data-act="back" aria-label="Back">\u2190</button>
+    <div class="grow"><div class="sub">Settings</div><div class="ttl">Calendars</div></div>
+  </div>`;
   if(!d) return back + `<div class="empty">Loading…</div>`;
 
   const intro = `<p class="cal-intro">Not everything on a calendar is something you have to do.
@@ -567,7 +623,7 @@ function calendarsView(){
     who-is-in-and-out boards work better as <b>Reference</b>: ${esc(brand())} will read them when you
     ask, but they never show up as your activities.</p>`;
 
-  const warn = d.error ? `<div class="pending" style="margin-bottom:14px"><div class="s">${esc(d.error)}${
+  const warn = d.error ? `<div class="pending"><div class="s">${esc(d.error)}${
       d.connected===false?' Reconnect a Google account in Settings.':''
     } Your settings below are saved and still editable.</div></div>` : '';
 
@@ -595,20 +651,64 @@ function calendarsView(){
 /* demo detail views (Aureo design, placeholder data) */
 function detailView(){
   if(S.detail==='calendars') return calendarsView();
-  const back = `<div class="dhead"><button class="back" data-act="back">←</button><div><div class="sub">Demo data</div><div class="ttl">${({nutrition:'Nutrition',sleep:'Sleep',finance:'Finance',workout:'Training',notes:'Notes',notifications:'Notifications'})[S.detail]||''}</div></div></div>`;
+  const TITLES={nutrition:'Nutrition',sleep:'Sleep',finance:'Finance',workout:'Training',notes:'Notes',notifications:'Notifications'};
+  const DEMO=['nutrition','sleep','finance','workout'];
+  const back = `<div class="dhead">
+    <button class="back" data-act="back" aria-label="Back">\u2190</button>
+    <div class="grow">
+      ${DEMO.includes(S.detail)?'<div class="sub">Sample data</div>':''}
+      <div class="ttl">${TITLES[S.detail]||''}</div>
+    </div>
+  </div>`;
   if(S.detail==='notifications'){
-    return back + (S.pending.length?`<div class="section-label" style="color:#cf9f5a">Needs you · ${S.pending.length}</div>
-      <div style="display:flex;flex-direction:column;gap:9px">${S.pending.map(p=>`<div class="pending"><div class="s">${esc(p.summary)}</div><div class="a"><button class="btn" data-confirm="${p.id}">Confirm</button><button class="btn ghost" data-cancel="${p.id}">Cancel</button></div></div>`).join('')}</div>`
-      :`<div style="color:var(--muted);padding:24px 4px">No notifications need you. Pending assistant proposals show up here.</div>`);
+    return back + (S.pending.length
+      ? `<div class="section-label" style="color:var(--warn)">Needs you \u00b7 ${S.pending.length}</div>
+         <div class="task-list">${S.pending.map(p=>`<div class="pending"><div class="s">${esc(p.summary)}</div><div class="a"><button class="btn" data-confirm="${p.id}">Confirm</button><button class="btn ghost" data-cancel="${p.id}">Cancel</button></div></div>`).join('')}</div>`
+      : `<div class="empty">Nothing needs you. Assistant proposals awaiting confirmation show up here.</div>`);
   }
-  if(S.detail==='nutrition') return back + `<div class="lead" style="display:flex;justify-content:space-between;align-items:center;border-color:rgba(230,169,44,.22)"><div><div class="mono" style="font-size:34px;color:var(--gold)">1,240</div><div style="font-size:12px;color:var(--muted)">of 2,100 kcal</div></div><div style="text-align:right"><div class="mono" style="font-size:22px;color:var(--ink)">860</div><div style="font-size:12px;color:var(--sage)">remaining</div></div></div><div class="bar" style="height:8px;margin-top:14px"><span style="width:59%"></span></div>${macros()}`;
-  if(S.detail==='sleep') return back + `<div style="display:flex;gap:11px"><div class="card" style="flex:1;cursor:default"><div class="mono" style="font-size:26px;color:var(--ink)">7h 12m</div><div style="font-size:12px;color:var(--sage);margin-top:5px">+24m vs avg</div></div><div class="card" style="flex:1;cursor:default;background:linear-gradient(155deg,#222a18,#1a1810);border-color:rgba(156,169,128,.25)"><div class="mono" style="font-size:26px;color:var(--sage)">84</div><div style="font-size:12px;color:var(--muted);margin-top:5px">sleep score</div></div></div><div class="section-label">Last 7 nights</div>${bars7()}`;
-  if(S.detail==='finance') return back + `<div class="lead" style="background:linear-gradient(155deg,#222a18,#1a1810);border-color:rgba(156,169,128,.25)"><div style="display:flex;justify-content:space-between;align-items:baseline"><div><div class="mono" style="font-size:30px;color:var(--sage)">$214</div><div style="font-size:12px;color:var(--muted);margin-top:4px">left of $600 weekly budget</div></div><div class="mono" style="font-size:14px;color:var(--faint)">$386 spent</div></div><div class="bar" style="height:8px;margin-top:14px"><span style="width:64%;background:var(--sage)"></span></div></div>`;
-  if(S.detail==='workout') return back + `<div class="card" style="cursor:default"><div class="k">Up next · 5:30 PM</div><div style="font-size:17px;color:var(--ink);font-weight:700">Evening session</div><div style="font-size:12px;color:var(--muted);margin-top:2px">~60 min</div></div>`;
+  if(S.detail==='nutrition') return back + `
+    <div class="lead row-between">
+      <div class="stat"><span class="n gold">1,240</span><span class="u">of 2,100 kcal</span></div>
+      <div class="stat" style="text-align:right"><span class="n">860</span><span class="u sage">remaining</span></div>
+    </div>
+    <div class="bar"><span style="width:59%"></span></div>
+    ${macros()}`;
+
+  if(S.detail==='sleep') return back + `
+    <div class="stat-row">
+      <div class="card"><div class="stat"><span class="n">7h 12m</span><span class="u sage">+24m vs avg</span></div></div>
+      <div class="card"><div class="stat"><span class="n sage">84</span><span class="u">sleep score</span></div></div>
+    </div>
+    <div class="section-label">Last 7 nights</div>${bars7()}`;
+
+  if(S.detail==='finance') return back + `
+    <div class="lead">
+      <div class="row-between">
+        <div class="stat"><span class="n sage">$214</span><span class="u">left of a $600 week</span></div>
+        <span class="u mono">$386 spent</span>
+      </div>
+      <div class="bar"><span style="width:64%;background:var(--sage)"></span></div>
+    </div>`;
+
+  if(S.detail==='workout') return back + `
+    <div class="card"><div class="k">Up next \u00b7 5:30 PM</div>
+      <div class="v">Evening session</div><div class="m">~60 min</div></div>`;
+
   return back;
 }
-const macros=()=>`<div class="section-label">Macros</div>${[['Protein','78 / 120g',65,'var(--gold)'],['Carbs','130 / 210g',62,'var(--sage)'],['Fat','41 / 70g',58,'#cf9f5a']].map(([n,v,w,c])=>`<div style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;font-size:13px;color:var(--ink-2);margin-bottom:6px"><span>${n}</span><span class="mono" style="color:var(--muted)">${v}</span></div><div class="bar" style="height:6px;margin:0"><span style="width:${w}%;background:${c}"></span></div></div>`).join('')}`;
-const bars7=()=>`<div style="display:flex;align-items:flex-end;gap:9px;height:110px">${[64,80,55,72,68,60,78].map((h,i)=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px"><span style="width:100%;height:${h}%;background:${i===6?'var(--gold)':'rgba(156,169,128,.5)'};border-radius:5px"></span><span style="font-size:10px;color:${i===6?'var(--gold)':'var(--faint)'}">${'WTFSSMT'[i]}</span></div>`).join('')}</div>`;
+
+const macros=()=>`<div class="section-label">Macros</div>` + [
+  ['Protein','78 / 120g',65,'var(--gold)'],
+  ['Carbs','130 / 210g',62,'var(--sage)'],
+  ['Fat','41 / 70g',58,'#cf9f5a'],
+].map(([n,v,w,c])=>`<div class="macro">
+    <div class="row"><span>${n}</span><span class="mono" style="color:var(--muted)">${v}</span></div>
+    <div class="bar"><span style="width:${w}%;background:${c}"></span></div>
+  </div>`).join('');
+
+const bars7=()=>`<div class="bars7">${[64,80,55,72,68,60,78].map((h,i)=>
+  `<div class="b${i===6?' on':''}"><span style="height:${h}%"></span><em>${'WTFSSMT'[i]}</em></div>`).join('')}</div>`;
+
 
 /* render() reassigns innerHTML on four containers, so any element that had focus stops
    existing and focus falls back to <body>. That is why the cursor was lost the moment a
@@ -647,12 +747,21 @@ function renderAll(){
     ${NAV.map(([k,l])=>`<a class="navitem${S.tab===k?' active':''}" data-go="${k}">${svg(k,S.tab===k?'#e6a92c':'#cfc6b4',19)}<span>${l}</span></a>`).join('')}
     <div class="spaces-h">Spaces</div>
     <div class="splist">${S.spaces.map(s=>`<div class="si" data-space="${esc(s.key)}"><span class="sw" style="background:${s.color}"></span><span>${esc(s.label)}</span><span class="c">${s.memories||0}</span></div>`).join('')}</div>
-    <div class="me" data-act="settings"><span class="a">${esc(initials())}</span><div style="flex:1"><div style="font-size:13.5px;color:var(--ink);font-weight:600">${esc((S.cfg&&S.cfg.user.name)||'Account')}</div><div style="font-size:11px;color:var(--faint)">${S.spaces.length} space${S.spaces.length===1?'':'s'}</div></div></div>`;
+    <div class="me" data-act="settings">
+      <span class="a">${esc(initials())}</span>
+      <div class="grow">
+        <div class="n">${esc((S.cfg&&S.cfg.user.name)||'Account')}</div>
+        <div class="s">${S.spaces.length} space${S.spaces.length===1?'':'s'}</div>
+      </div>
+    </div>`;
 
-  // topbar (desktop shows title; mobile shows nothing here — header is in home view)
-  const titles={home:'Dashboard',calendar:'Calendar',tasks:'Tasks',spaces:'Spaces',chat:brand()};
-  document.getElementById('topbar').innerHTML = `<div class="desktop-only"><div class="ttl">${esc(S.detail?titles[S.detail]||'Detail':titles[S.tab]||'')}</div><div class="sub">${esc(todayStr())} · ${S.role==='All'?'All spaces':esc(roleLabel(S.role))+' space'}</div></div>
-    <div class="desktop-only" style="display:flex;align-items:center;gap:16px"><div style="text-align:right"><div class="temp mono" style="font-size:16px;color:var(--gold)">72°</div><div class="cond">Sunny</div></div></div>`;
+  // topbar (desktop only; on mobile the greeting lives in the home view)
+  const titles={home:'Dashboard',calendar:'Calendar',tasks:'Tasks',spaces:'Spaces',chat:brand(),calendars:'Calendars'};
+  document.getElementById('topbar').innerHTML =
+    `<div class="desktop-only">
+       <div class="ttl">${esc(S.detail?titles[S.detail]||'Detail':titles[S.tab]||'')}</div>
+       <div class="sub">${esc(todayStr())} \u00b7 ${S.role==='All'?'All spaces':esc(roleLabel(S.role))+' space'}</div>
+     </div>`;
 
   // main view
   let html;
@@ -662,17 +771,21 @@ function renderAll(){
   else if(S.tab==='tasks') html=tasksView();
   else if(S.tab==='spaces') html=spacesView();
   else if(S.tab==='chat') html=chatView();
-  document.getElementById('view').innerHTML=html;
+  // Chat is its own layout, not a document inside the dashboard scroller. The modifier
+  // drops the page gutter and vertical rhythm so the thread and composer belong together.
+  const view = document.getElementById('view');
+  view.className = 'scroll' + (S.tab==='chat' && !S.detail ? ' is-chat' : '');
+  view.innerHTML = html;
 
-  // chrome (bottom nav + omnipresent chat bar)
+  // chrome (bottom nav + omnipresent composer)
   document.getElementById('chrome').innerHTML = `
     <div class="nav">${NAV.map(([k,l])=>`<a class="${S.tab===k&&!S.detail?'active':''}" data-go="${k}">${svg(k,S.tab===k&&!S.detail?'#e6a92c':'#6f6a5e')}<span>${l}</span></a>`).join('')}</div>
-    <div class="voice-row"><span class="voice-badge" id="voiceBadge" style="display:none"></span><span class="tool-hint" id="toolHint" style="display:none"></span></div>
+    <div class="voice-row"><span class="voice-badge" id="voiceBadge" hidden></span><span class="tool-hint" id="toolHint" hidden></span></div>
     <div class="bar-chat">
-      <button class="mic" id="micBtn" title="Hold to dictate">${svg('mic','#cfc6b4',18)}</button>
-      <input id="chatInput" placeholder="Ask or tell ${esc(brand())} anything…" value="${esc(S.chatInput)}">
-      <button class="conv-btn" id="convBtn" data-act="conv" title="Hands-free conversation">${svg('wave','#cfc6b4',18)}</button>
-      <button class="send" data-act="send">↑</button>
+      <button class="mic" id="micBtn" title="Hold to dictate" aria-label="Hold to dictate">${svg('mic','#cfc6b4',18)}</button>
+      <input id="chatInput" placeholder="Ask or tell ${esc(brand())} anything\u2026" value="${esc(S.chatInput)}">
+      <button class="conv-btn" id="convBtn" data-act="conv" title="Hands-free conversation" aria-label="Hands-free conversation">${svg('wave','#cfc6b4',18)}</button>
+      <button class="send" data-act="send" aria-label="Send">\u2191</button>
     </div>`;
   updateVoiceChrome();
 
@@ -684,20 +797,35 @@ function renderAll(){
 function drawerHTML(){
   const accts=(S.cfg&&S.cfg.googleAccounts)||[];
   const feat=(S.cfg&&S.cfg.features)||{};
-  const acctRows = accts.length?accts.map(a=>`<div class="drawer-item"><span class="sw" style="background:var(--sage)"></span><span class="l">${esc(a.email)}</span><span class="r">${esc(a.label||'')}</span></div>`).join(''):`<div class="drawer-item" style="cursor:default"><span class="sw" style="background:var(--dim)"></span><span class="l" style="color:var(--muted)">None connected</span></div>`;
-  return `<div class="drawer-head"><span class="a">${esc(initials())}</span><div style="flex:1"><div class="n">${esc((S.cfg&&S.cfg.user.name)||'Account')}</div><div class="e">${esc((S.cfg&&S.cfg.user.email)||'')}</div></div><span data-act="settings" style="color:var(--muted);font-size:20px;cursor:pointer">✕</span></div>
+  const dot = on => `<span class="sw" style="background:${on?'var(--sage)':'var(--dim)'}"></span>`;
+  const acctRows = accts.length
+    ? accts.map(a=>`<div class="drawer-item">${dot(true)}<span class="l">${esc(a.email)}</span><span class="r">${esc(a.label||'')}</span></div>`).join('')
+    : `<div class="drawer-item">${dot(false)}<span class="l" style="color:var(--muted)">None connected</span></div>`;
+
+  return `<div class="drawer-head">
+    <span class="a">${esc(initials())}</span>
+    <div class="grow">
+      <div class="n">${esc((S.cfg&&S.cfg.user.name)||'Account')}</div>
+      <div class="e">${esc((S.cfg&&S.cfg.user.email)||'')}</div>
+    </div>
+    <button class="back" data-act="settings" aria-label="Close">\u2715</button>
+  </div>
   <div class="drawer-body">
     <div class="g">Connected Google accounts</div>
     ${acctRows}
-    <a class="drawer-item" href="/connect/google?account=personal"><span class="sw" style="background:var(--gold)"></span><span class="l">Connect personal Gmail / Calendar</span><span class="r">→</span></a>
-    <a class="drawer-item" href="/connect/google?account=work"><span class="sw" style="background:#6fa195"></span><span class="l">Connect work Gmail / Calendar</span><span class="r">→</span></a>
-    <div class="drawer-item" data-act="clear-chat"><span class="sw" style="background:#cf8a6a"></span><span class="l">Clear chat history</span><span class="r">↺</span></div>
-    <div class="drawer-item" data-detail="calendars"><span class="sw" style="background:var(--sage)"></span><span class="l">Calendars</span><span class="r">→</span></div>
+    <a class="drawer-item" href="/connect/google?account=personal"><span class="sw"></span><span class="l">Connect personal Gmail / Calendar</span><span class="r">&rarr;</span></a>
+    <a class="drawer-item" href="/connect/google?account=work"><span class="sw" style="background:#6fa195"></span><span class="l">Connect work Gmail / Calendar</span><span class="r">&rarr;</span></a>
+
+    <div class="g">Assistant</div>
+    <div class="drawer-item" data-detail="calendars"><span class="sw" style="background:var(--sage)"></span><span class="l">Calendars</span><span class="r">&rarr;</span></div>
+    <div class="drawer-item" data-act="clear-chat"><span class="sw" style="background:var(--warn)"></span><span class="l">Clear chat history</span><span class="r">\u21ba</span></div>
+
     <div class="g">Integrations</div>
-    ${[['Timeclock',feat.timeclock],['Tasks (charliework)',feat.tasks],['Bookmarks',feat.bookmarks],['Containers',feat.containers]].map(([n,on])=>`<div class="drawer-item" style="cursor:default"><span class="sw" style="background:${on?'var(--sage)':'var(--dim)'}"></span><span class="l">${n}</span><span class="r">${on?'On':'Off'}</span></div>`).join('')}
+    ${[['Timeclock',feat.timeclock],['Tasks',feat.tasks],['Bookmarks',feat.bookmarks],['Containers',feat.containers]]
+      .map(([n,on])=>`<div class="drawer-item">${dot(on)}<span class="l">${n}</span><span class="r">${on?'On':'Off'}</span></div>`).join('')}
+
     <div class="g">App</div>
-    <div class="drawer-item" data-act="install"><span class="sw" style="background:var(--gold)"></span><span class="l">Add to Home Screen</span><span class="r"></span></div>
-    <div class="drawer-item" style="cursor:default"><span class="sw" style="background:var(--dim)"></span><span class="l">About ${esc(brand())}</span><span class="r">v0.1</span></div>
+    <div class="drawer-item" data-act="install"><span class="sw"></span><span class="l">Add to Home Screen</span><span class="r"></span></div>
     <a class="signout" href="/auth/logout">Sign out</a>
   </div>`;
 }

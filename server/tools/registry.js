@@ -21,6 +21,8 @@ const { TZ } = require('../config');
 const timeclock = require('../integrations/timeclock');
 const charliework = require('../integrations/charliework');
 const tasks = require('../services/tasks');
+const windowOf = require('../brain/window');
+const pronounce = require('../services/pronounce');
 const cfg = require('../config');
 const bookmarks = require('../integrations/bookmarks');
 const containers = require('../integrations/containers');
@@ -203,7 +205,7 @@ const TOOLS = [
     name: 'list_calendar_events',
     group: 'calendar',
     tier: 'read',
-    description: "Read calendar events for a day.\n\nIf the question names a PLACE, ROOM, BUILDING or a specific calendar (the Wilke, the pool, the Krantz Center, the auditorium, room 218, the esports arena, the lunch menu, the in/out board), pass that name as `calendar`. That searches THAT calendar regardless of its role, which is the only way to answer questions about rooms and locations.\n\nOtherwise this returns only the user's own commitments. Calendars marked reference are excluded: birthdays, menus, who-is-in-and-out. Ask for those with include='reference'. Never present a reference entry, a room booking or someone else's event as something the user has to do.",
+    description: "Read calendar events. The result is ALREADY filtered to the part of the day the user asked about \u2014 by default what is still to come, not what already finished. Report exactly what the tool returns and nothing more. If it says events were excluded, do not list them.\n\nIf the question names a PLACE, ROOM or BUILDING (the Wilke, the pool, the Krantz Center, the auditorium, room 218, the lunch menu, the in/out board), pass that name as `calendar`. That is the only way to answer questions about rooms.\n\nOtherwise this returns the user's own commitments. Calendars marked reference are excluded; ask for those with include='reference'. Never present a reference entry or a room booking as something the user has to do.",
     schema: { type: 'object', properties: {
       date: { type: 'string', description: 'YYYY-MM-DD (local). Omit for today.' },
       calendar: {
@@ -223,8 +225,11 @@ const TOOLS = [
       // it against the real calendar list, so use that rather than answering the wrong
       // question. An explicit argument always wins.
       const calendar = a.calendar || ctx.calendarHint || undefined;
+      // Node decided the day. The model's `date` is honoured only when it agrees, because
+      // it does not: at 10:35pm it passed tomorrow's date for a question about today.
+      const date = ctx.targetDate || a.date;
       const res = await gcal.listEvents({
-        account: a.account, date: a.date, scope: a.scope, include, calendar,
+        account: a.account, date, scope: a.scope, include, calendar,
       });
       if (!res.connected) return 'No Google account connected yet. Connect one in Settings.';
 
@@ -242,29 +247,52 @@ const TOOLS = [
             : `Call list_calendars to see the available names.`);
       }
 
-      if (!res.events.length) {
-        if (calendar) {
-          return `Nothing booked on ${res.matchedCalendars.join(' + ')} for ${res.day}.`;
+      const events = (res.events || []).filter(e => !e.error);
+      const errs = (res.events || []).filter(e => e.error);
+
+      // Apply the time window BEFORE anything is shown. A finished meeting is not on your
+      // schedule, and handing the model the whole day and hoping it filters does not work:
+      // it relays what it is given.
+      // "Remaining" only means something for today. Any other day is asked about whole.
+      const win = (ctx.isToday === false) ? { window: 'all', segment: null }
+        : (ctx.timeWindow || { window: 'remaining', segment: null });
+      const { kept, dropped, reason } = windowOf.apply(events, win, { now: ctx.now || new Date() });
+
+      const where = calendar ? ` on ${res.matchedCalendars.join(' + ')}` : '';
+      const scope = windowOf.heading(win);
+
+      if (!kept.length) {
+        // Distinguish the three ways a list can be empty. Each needs a different answer and
+        // conflating them is how "nothing left today" became "you have nothing today".
+        if (dropped.length) {
+          return `${scope}${where}: nothing. (${dropped.length} event${dropped.length === 1 ? '' : 's'} `
+            + `today ${reason}${win.window === 'remaining' ? '; the day is done' : ''}.) `
+            + `Say so plainly. Do NOT list the ${reason} ones unless asked.`;
         }
-        // Distinguish "nothing on" from "nothing on, but there IS reference material", so a
-        // question about a birthday or the menu is not answered with a flat no.
-        if (include === 'agenda') {
+        if (!calendar && include === 'agenda') {
           const ref = await gcal.listEvents({ account: a.account, date: a.date, scope: a.scope, include: 'reference' })
             .catch(() => ({ events: [] }));
           const n = (ref.events || []).filter(e => !e.error).length;
-          if (n) return `No commitments for ${res.day}. (${n} reference entr${n === 1 ? 'y' : 'ies'} exist on birthday/menu/in-out style calendars; call again with include='reference' if that is what was asked.)`;
+          if (n) return `Nothing on ${res.day}. (${n} reference entr${n === 1 ? 'y' : 'ies'} exist on `
+            + `birthday/menu/in-out style calendars; call again with include='reference' if that is what was asked.)`;
         }
-        return `No events for ${res.day}.`;
+        return `Nothing at all on ${res.day}${where}.`;
       }
 
-      const line = e => e.error ? `(! ${e.error})`
-        : `${e.time || 'all day'} · ${e.title}${e.location ? ' @ ' + e.location : ''} [${e.calendar}${!a.calendar && e.calendarMode === 'reference' ? ', reference only' : ''}]`;
+      const line = e => `${e.time || 'all day'} \u00b7 ${e.title}`
+        + `${e.location ? ' @ ' + e.location : ''}`
+        + ` [${e.calendar}${!calendar && e.calendarMode === 'reference' ? ', reference only' : ''}]`;
+
       const header = calendar
-        ? `Bookings on ${res.matchedCalendars.join(' + ')} for ${res.day}. These are that calendar's events, NOT the user's own commitments:\n`
-        : include === 'reference' ? 'REFERENCE entries (not commitments):\n'
-        : include === 'all' ? 'Commitments and reference entries (reference ones are marked):\n'
+        ? `${scope}${where}. These are that calendar's bookings, NOT the user's own commitments:`
+        : include === 'reference' ? `REFERENCE entries (not commitments), ${scope.toLowerCase()}:`
+        : `${scope}, ${kept.length} of ${events.length} today:`;
+
+      const tail = dropped.length
+        ? `(${dropped.length} other event${dropped.length === 1 ? '' : 's'} today ${reason} \u2014 not listed, and not to be mentioned unless asked.)`
         : '';
-      return header + res.events.map(line).join('\n');
+
+      return [header, ...kept.map(line), tail, ...errs.map(e => `(! ${e.error})`)].filter(Boolean).join('\n');
     },
   },
 
@@ -595,6 +623,23 @@ const TOOLS = [
       if (!res.connected) return 'No Google account connected yet.';
       if (res.error) return `error: ${res.error}`;
       return `# ${res.title}\n\n` + (res.slides || []).map((s, i) => `Slide ${i + 1}:\n${s}`).join('\n\n');
+    },
+  },
+
+  {
+    name: 'set_pronunciation',
+    group: 'core',
+    tier: 'write',
+    description: "Teach the voice how to say a word it gets wrong. Use when the user says something like \"pronounce Wilke as will-key\" or \"you're saying that wrong, it's ...\". Give say_as as a plain respelling of the sound, not the spelling: for Wilke, say_as is \"will key\".",
+    schema: { type: 'object', properties: {
+      word: { type: 'string', description: 'The word as it is spelled, e.g. "Wilke".' },
+      say_as: { type: 'string', description: 'A respelling of how it sounds, e.g. "will key". Plain letters, spaces are fine.' },
+    }, required: ['word', 'say_as'] },
+    handler: async (a) => {
+      try {
+        const r = pronounce.set({ word: a.word, say_as: a.say_as });
+        return `Got it. "${r.word}" will be spoken as "${r.say_as}".`;
+      } catch (e) { return `error: ${e.message}`; }
     },
   },
 

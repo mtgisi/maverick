@@ -139,6 +139,9 @@ app.use(express.static(path.join(__dirname, '../public')));
 // --- Task mirror — poll charliework + goosework into the unified `tasks` table ---
 require('./services/tasks').startSync();
 
+// --- Seed the speech pronunciation dictionary on first run ---
+require('./services/pronounce').seed();
+
 // --- Reminder poller — every 30s, fire any due reminders via ntfy ---
 setInterval(async () => {
   const due = db.prepare("SELECT id, text FROM reminders WHERE sent=0 AND fire_at <= ?").all(new Date().toISOString());

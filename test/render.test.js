@@ -89,6 +89,8 @@ S.taskCounts = { open: 67, overdue: 6, due_soon: 0, by_source: { charliework: 62
 S.tasksUnsynced = 1;
 S.messages = [{ from: 'user', text: 'what is on my calendar' }, { from: 'ai', text: 'Three things **today**.' }];
 S.pending = [{ id: 1, summary: 'Clock-out 5:34 PM -> 6:34 PM' }];
+S.pron = [{ word: 'Wilke', say_as: 'will key', phonemes: 'wˈɪlki', note: 'the gym' },
+          { word: 'Krantz', say_as: 'krants', phonemes: null }];
 S.calendars = { connected: true, modes: ['agenda', 'reference', 'off'], counts: {},
   calendars: [{ id: 'a@x', account: 'work', summary: 'EHS Birthdays', kind: 'owned', mode: 'reference', explicit: true },
               { id: 'b@x', account: 'work', summary: 'Gone', kind: 'unknown', mode: 'off', explicit: true, missing: true }] };
@@ -113,7 +115,7 @@ for (const tab of VIEWS) {
 }
 
 // Detail screens, including the settings one that is reachable without demo tiles.
-for (const detail of ['notifications', 'calendars']) {
+for (const detail of ['notifications', 'calendars', 'pronounce']) {
   S.tab = 'home'; S.detail = detail;
   let html = '';
   check(`renders the ${detail} detail`, () => { sandbox.__app.renderAll(); html = els.view.innerHTML; return html.length > 40; });

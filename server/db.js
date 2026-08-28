@@ -66,6 +66,17 @@ db.exec(`
     sort INTEGER DEFAULT 0
   );
 
+  -- How the voice should say words the grapheme-to-phoneme pass gets wrong. Verified: Kokoro
+  -- phonemizes "Wilke" as /wˈɪlk/, dropping the final vowel, so the gym is said "wilk"
+  -- rather than "will-key". Applied to speech only; written text keeps the real spelling.
+  CREATE TABLE IF NOT EXISTS pronunciations (
+    word       TEXT PRIMARY KEY COLLATE NOCASE,
+    say_as     TEXT,       -- respelling, e.g. "will key"
+    phonemes   TEXT,       -- optional IPA, emitted as Kokoro's [word](/ipa/) syntax
+    note       TEXT,
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+
   -- Per-calendar role. Not every calendar you can see is a thing you have to do.
   --
   --   agenda    this calendar IS your day. Counts as an activity, feeds "what's on today".

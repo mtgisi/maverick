@@ -113,8 +113,28 @@ function applyRelative(base, expr) {
 
 const isRelative = expr => REL.test(String(expr || '').trim());
 
+// The local calendar day (YYYY-MM-DD) an instant falls on.
+const dayOf = (d, timeZone = TZ) =>
+  new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+
+// Which DAY a question is about, decided in Node.
+//
+// Not a nicety. At 22:35 local on the 27th, asked "what's on my schedule today", the model
+// passed date:"2026-08-28" and cheerfully described tomorrow as today. It reads the ISO
+// instant out of the system prompt and gets the timezone arithmetic wrong, exactly as it
+// does with "tomorrow at 9". So the day comes from here and the model's `date` argument is
+// only honoured when it agrees.
+function targetDate(hits, { reference = new Date(), timeZone = TZ } = {}) {
+  const today = dayOf(reference, timeZone);
+  for (const h of hits || []) {
+    const d = dayOf(new Date(h.iso), timeZone);
+    if (d !== today) return d;          // an explicitly named other day wins
+  }
+  return today;
+}
+
 module.exports = {
   resolve, promptBlock, validateInstant, applyRelative, isRelative,
-  offsetMinutes, fmtLocal,
+  offsetMinutes, fmtLocal, dayOf, targetDate,
   MAX_AHEAD_MS, MAX_BEHIND_MS,
 };

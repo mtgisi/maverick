@@ -166,4 +166,59 @@ router.post('/stt', express.raw({ type: 'application/octet-stream', limit: '25mb
   }
 });
 
+// POST /api/device/speak { text, voice?, speed? } -> audio stream
+//
+// Device-token TTS, so a desktop client can run the same hands-free loop the PWA
+// runs. /api/voice/speak is identical but sits behind the Google session gate,
+// which a non-browser client cannot hold.
+//
+// Written self-contained rather than by extracting a shared helper out of
+// routes/voice.js: everything this file adds is additive, so it can be reviewed
+// and reverted without touching a route the PWA depends on. If this outlives the
+// review, fold the two together — the duplication is deliberate, not accidental.
+router.post('/speak', async (req, res) => {
+  if (!cfg.tts.enabled) return res.status(503).json({ error: 'tts_disabled' });
+  const text = String((req.body && req.body.text) || '').trim();
+  if (!text) return res.status(400).json({ error: 'empty_text' });
+  if (text.length > 2000) return res.status(413).json({ error: 'text_too_long' });
+
+  try {
+    const upstream = await fetch(`${cfg.tts.url}/v1/audio/speech`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'kokoro',
+        voice: (req.body && req.body.voice) || cfg.tts.voice,
+        input: text,
+        response_format: cfg.tts.format,
+        speed: Number((req.body && req.body.speed) || cfg.tts.speed),
+      }),
+      signal: AbortSignal.timeout(60000),
+    });
+    if (!upstream.ok) {
+      console.error('[device/speak] tts', upstream.status);
+      return res.status(502).json({ error: 'tts_failed', status: upstream.status });
+    }
+
+    res.setHeader('Content-Type', upstream.headers.get('content-type') || `audio/${cfg.tts.format}`);
+    res.setHeader('Cache-Control', 'no-store');
+
+    const reader = upstream.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!res.write(Buffer.from(value))) {
+        // Respect backpressure: the client is a desktop app on a school network,
+        // not localhost, and mp3 for a long reply is not small.
+        await new Promise(r => res.once('drain', r));
+      }
+    }
+    res.end();
+  } catch (e) {
+    console.error('[device/speak]', e.message);
+    if (!res.headersSent) res.status(502).json({ error: 'tts_failed' });
+    else res.end();
+  }
+});
+
 module.exports = router;

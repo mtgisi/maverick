@@ -212,6 +212,33 @@ async function listEvents({ account, date, calendarId, calendar, scope = 'mine',
     seenIds.set(e.id, e);
     deduped.push(e);
   }
+
+  // The same real event also appears twice when it is published to two DIFFERENT calendars,
+  // which have different event ids: a class sits on both "Edgewood Calendar" and "EHS
+  // Scheduler", so "what's on today" counted five things when there were three.
+  //
+  // Collapsed on title plus start time, but ONLY across different calendars. Within a single
+  // calendar, two entries with the same name and time are two real bookings (there are
+  // genuinely two 4:00 PM swim practices in the same pool), and merging those would delete
+  // information.
+  const byMoment = new Map();
+  const merged = [];
+  for (const e of deduped) {
+    if (e.error || !e.start || !e.title) { merged.push(e); continue; }
+    const k = `${e.title.trim().toLowerCase()}@${e.start}`;
+    const prior = byMoment.get(k);
+    if (prior && prior.calendar !== e.calendar) {
+      if (!prior.alsoOn) prior.alsoOn = [prior.calendar];
+      if (!prior.alsoOn.includes(e.calendar)) prior.alsoOn.push(e.calendar);
+      // Prefer whichever copy actually carries a location.
+      if (!prior.location && e.location) prior.location = e.location;
+      continue;
+    }
+    if (!prior) byMoment.set(k, e);
+    merged.push(e);
+  }
+  deduped.length = 0;
+  deduped.push(...merged);
   all.length = 0;
   all.push(...deduped);
   // Report what a name actually resolved to. Without this a typo silently returns nothing

@@ -78,7 +78,7 @@ const S = {
   drawer:false, conv:'web',
   // tasks (unified charliework + goosework mirror)
   taskSource:'All', taskCounts:null, taskSources:[], tasksUnsynced:0,
-  calendars:null,
+  calendars:null, pron:null, pronBusy:null,
   // voice
   convMode:false, dictating:false, voiceState:'idle', voiceError:'', streaming:'', tool:null,
 };
@@ -648,10 +648,110 @@ function calendarsView(){
   return back + intro + warn + body;
 }
 
+/* ---------- pronunciation: teaching the voice local words ---------- */
+
+async function loadPronunciations(){
+  try { S.pron = await api('/voice/pronunciations'); }
+  catch(_){ S.pron = []; }
+}
+
+async function addPronunciation(){
+  const word=(prompt('Which word does it say wrong?')||'').trim();
+  if(!word) return;
+  const sayAs=(prompt(`How should "${word}" sound?\nWrite it the way you would say it, e.g. "will key".`)||'').trim();
+  if(!sayAs) return;
+  await savePronunciation(word, sayAs);
+}
+
+async function savePronunciation(word, sayAs){
+  S.pronBusy=word; render();
+  try {
+    // Convert the respelling through Kokoro's own G2P so the stored phonemes are exactly
+    // what it would say for that spelling. Falls back to the plain respelling if the
+    // phonemizer is unavailable, which still works, just less precisely.
+    let phonemes=null;
+    try {
+      const r=await api('/voice/pronunciations/phonemize',{method:'POST',body:JSON.stringify({text:sayAs})});
+      phonemes=r&&r.phonemes||null;
+    } catch(_){}
+    await api('/voice/pronunciations',{method:'POST',body:JSON.stringify({word,say_as:sayAs,phonemes})});
+  } catch(_){}
+  S.pronBusy=null;
+  await loadPronunciations(); render();
+}
+
+async function delPronunciation(word){
+  if(!confirm(`Stop correcting "${word}"?`)) return;
+  try { await api('/voice/pronunciations/'+encodeURIComponent(word),{method:'DELETE'}); } catch(_){}
+  await loadPronunciations(); render();
+}
+
+async function convertAllPronunciations(){
+  S.pronBusy='*'; render();
+  for(const e of (S.pron||[])){
+    if(!e.say_as) continue;
+    try {
+      const r=await api('/voice/pronunciations/phonemize',{method:'POST',body:JSON.stringify({text:e.say_as})});
+      if(r&&r.phonemes) await api('/voice/pronunciations',{method:'POST',body:JSON.stringify({word:e.word,say_as:e.say_as,phonemes:r.phonemes})});
+    } catch(_){}
+  }
+  S.pronBusy=null;
+  await loadPronunciations(); render();
+}
+
+// Say the word out loud so you can check the fix by ear, which is the only test that counts.
+async function previewPronunciation(word){
+  try {
+    const r=await fetch('/api/voice/speak',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text:word})});
+    if(!r.ok) return;
+    const url=URL.createObjectURL(await r.blob());
+    const a=new Audio(url); a.onended=()=>URL.revokeObjectURL(url); a.play().catch(()=>{});
+  } catch(_){}
+}
+
+function pronounceView(){
+  const back = `<div class="dhead">
+    <button class="back" data-act="back" aria-label="Back">\u2190</button>
+    <div class="grow"><div class="sub">Settings</div><div class="ttl">Pronunciation</div></div>
+    <button class="btn sm" data-act="pron-add">+ Add</button>
+  </div>`;
+  if(!S.pron) return back + `<div class="empty">Loading\u2026</div>`;
+
+  const intro = `<p class="cal-intro">The voice guesses at names it has not seen and gets local ones
+    wrong. Write the word, then write how it <b>sounds</b> in plain letters, and
+    ${esc(brand())} converts that to the exact phonemes it will speak.</p>`;
+
+  const rows = S.pron.length ? `<div class="cal-list">${S.pron.map(e=>`
+    <div class="cal-row${S.pronBusy===e.word||S.pronBusy==='*'?' missing':''}">
+      <div class="cal-name">
+        <div class="n">${esc(e.word)}</div>
+        <div class="m">says \u201c${esc(e.say_as||'')}\u201d${e.phonemes?' \u00b7 '+esc(e.phonemes):' \u00b7 not converted'}</div>
+      </div>
+      <div class="seg">
+        <button class="seg-btn" data-pron-play="${esc(e.word)}" title="Hear it">\u25b6</button>
+        <button class="seg-btn" data-pron-edit="${esc(e.word)}" title="Change how it sounds">\u270e</button>
+        <button class="seg-btn" data-pron-del="${esc(e.word)}" title="Remove">\u2715</button>
+      </div>
+    </div>`).join('')}</div>`
+    : `<div class="empty">Nothing corrected yet. Tap <b>+ Add</b> when the voice mangles a name.</div>`;
+
+  const convert = S.pron.length
+    ? `<div class="lead row-between">
+         <div><div class="v">Re-convert every entry</div>
+           <div class="m">Runs each spelling through the voice again. Use it after editing several.</div></div>
+         <button class="btn" data-act="pron-convert">${S.pronBusy==='*'?'Working\u2026':'Convert all'}</button>
+       </div>`
+    : '';
+
+  return back + intro + rows + convert;
+}
+
 /* demo detail views (Aureo design, placeholder data) */
 function detailView(){
   if(S.detail==='calendars') return calendarsView();
-  const TITLES={nutrition:'Nutrition',sleep:'Sleep',finance:'Finance',workout:'Training',notes:'Notes',notifications:'Notifications'};
+  if(S.detail==='pronounce') return pronounceView();
+  const TITLES={nutrition:'Nutrition',sleep:'Sleep',finance:'Finance',workout:'Training',notes:'Notes',notifications:'Notifications',pronounce:'Pronunciation'};
   const DEMO=['nutrition','sleep','finance','workout'];
   const back = `<div class="dhead">
     <button class="back" data-act="back" aria-label="Back">\u2190</button>
@@ -818,6 +918,7 @@ function drawerHTML(){
 
     <div class="g">Assistant</div>
     <div class="drawer-item" data-detail="calendars"><span class="sw" style="background:var(--sage)"></span><span class="l">Calendars</span><span class="r">&rarr;</span></div>
+    <div class="drawer-item" data-detail="pronounce"><span class="sw" style="background:var(--sage)"></span><span class="l">Pronunciation</span><span class="r">&rarr;</span></div>
     <div class="drawer-item" data-act="clear-chat"><span class="sw" style="background:var(--warn)"></span><span class="l">Clear chat history</span><span class="r">\u21ba</span></div>
 
     <div class="g">Integrations</div>
@@ -837,13 +938,21 @@ let deferredPrompt=null;
 window.addEventListener('beforeinstallprompt', e=>{ e.preventDefault(); deferredPrompt=e; });
 
 document.addEventListener('click', e=>{
-  const t=e.target.closest('[data-go],[data-role],[data-act],[data-detail],[data-task],[data-tsrc],[data-cal-mode],[data-space-add],[data-space-edit],[data-space-del],[data-space],[data-confirm],[data-cancel],[data-suggest]');
+  const t=e.target.closest('[data-go],[data-role],[data-act],[data-detail],[data-task],[data-tsrc],[data-cal-mode],[data-pron-play],[data-pron-edit],[data-pron-del],[data-space-add],[data-space-edit],[data-space-del],[data-space],[data-confirm],[data-cancel],[data-suggest]');
   if(!t) return;
   if('spaceAdd' in t.dataset){ addSpace(); return; }
   if(t.dataset.spaceEdit){ editSpace(t.dataset.spaceEdit); return; }
   if(t.dataset.spaceDel){ delSpace(t.dataset.spaceDel); return; }
   if(t.dataset.go){ S.tab=t.dataset.go; S.detail=null; render(); return; }
   if(t.dataset.role){ S.role=t.dataset.role; render(); return; }
+  if(t.dataset.pronPlay){ previewPronunciation(t.dataset.pronPlay); return; }
+  if(t.dataset.pronDel){ delPronunciation(t.dataset.pronDel); return; }
+  if(t.dataset.pronEdit){
+    const cur=(S.pron||[]).find(x=>x.word===t.dataset.pronEdit);
+    const v=prompt(`How should "${t.dataset.pronEdit}" sound?`, (cur&&cur.say_as)||'');
+    if(v&&v.trim()) savePronunciation(t.dataset.pronEdit, v.trim());
+    return;
+  }
   if(t.dataset.calMode){
     setCalendarMode(t.dataset.calAcct, t.dataset.calId, t.dataset.calMode, t.dataset.calLabel);
     return;
@@ -851,6 +960,7 @@ document.addEventListener('click', e=>{
   if(t.dataset.detail){
     S.detail=t.dataset.detail; S.drawer=false; render();
     if(S.detail==='calendars') loadCalendars().then(render);
+    if(S.detail==='pronounce') loadPronunciations().then(render);
     return;
   }
   if(t.dataset.space){ S.role=t.dataset.space; S.tab='home'; S.detail=null; S.drawer=false; render(); return; }
@@ -876,6 +986,8 @@ document.addEventListener('click', e=>{
   else if(a==='back'){ S.detail=null; render(); }
   else if(a==='why'){ S.whyOpen=!S.whyOpen; render(); }
   else if(a==='conv'){ toggleConversation(); }
+  else if(a==='pron-add'){ addPronunciation(); }
+  else if(a==='pron-convert'){ convertAllPronunciations(); }
   else if(a==='send'){ const inp=document.getElementById('chatInput'); S.chatInput=inp?inp.value:''; send(); }
   else if(a==='chat-plan'){ send('Plan my day and tell me what to start with.'); }
   else if(a==='clear-chat'){

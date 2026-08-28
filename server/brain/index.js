@@ -24,6 +24,7 @@ const gating = require('./gating');
 const context = require('./context');
 const prompt = require('./prompt');
 const time = require('./time');
+const windowOf = require('./window');
 const { dispatch } = require('../tools');
 const calPrefs = require('../services/calendars');
 const { brain, TZ } = require('../config');
@@ -65,6 +66,16 @@ async function run(conversationId, message, opts = {}) {
   let calendarHits = [];
   try { calendarHits = await calPrefs.resolveFromMessage(message); } catch (_) {}
   const calendarHint = calendarHits.length ? calendarHits[0].token : null;
+
+  // Which slice of the day the question is about. "What's on my schedule today" means what
+  // is LEFT, not a recital of things that already finished. Resolved here, applied by the
+  // tool, so the model never has to decide what is still relevant.
+  // Which day, and which slice of it. Both decided here rather than by the model: it gets
+  // the day wrong late in the evening (passing tomorrow's date while saying "today"), and
+  // it has no notion that a finished event is no longer on your schedule.
+  const targetDate = time.targetDate(hits);
+  const isToday = targetDate === time.dayOf(new Date());
+  const timeWindow = windowOf.resolve(message, { explicitDate: !isToday });
 
   const systemPrompt = prompt.build({
     resolvedTimes: time.promptBlock(hits),
@@ -144,7 +155,7 @@ async function run(conversationId, message, opts = {}) {
             if (emit) emit({ type: 'tool_start', tool: name });
             const out = await dispatch(name, {}, {
               conversationId, actor: 'system', surface, now: new Date(), tz: TZ,
-              resolvedTimes: hits, calendarHint,
+              resolvedTimes: hits, calendarHint, timeWindow, targetDate, isToday,
             });
             const res = context.truncateToolResult(out.result);
             toolsUsed.push({ tool: name, ok: out.ok, forced: true });
@@ -203,7 +214,7 @@ async function run(conversationId, message, opts = {}) {
         if (emit) emit({ type: 'tool_start', tool: name });
         const out = await dispatch(name, argsObject(call.function.arguments), {
           conversationId, actor: 'model', surface, now: new Date(), tz: TZ,
-          resolvedTimes: hits, calendarHint,
+          resolvedTimes: hits, calendarHint, timeWindow, targetDate, isToday,
         });
         result = context.truncateToolResult(out.result);
         toolsUsed.push({ tool: name, ok: out.ok });

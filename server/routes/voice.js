@@ -14,6 +14,7 @@
 
 const express = require('express');
 const cfg = require('../config');
+const pronounce = require('../services/pronounce');
 
 const router = express.Router();
 
@@ -86,9 +87,12 @@ router.post('/transcribe', rawAudio, async (req, res) => {
 // second is still being made.
 router.post('/speak', async (req, res) => {
   if (!cfg.tts.enabled) return res.status(503).json({ error: 'tts_disabled' });
-  const text = String((req.body && req.body.text) || '').trim();
-  if (!text) return res.status(400).json({ error: 'empty_text' });
-  if (text.length > 2000) return res.status(413).json({ error: 'text_too_long' });
+  const raw = String((req.body && req.body.text) || '').trim();
+  if (!raw) return res.status(400).json({ error: 'empty_text' });
+  if (raw.length > 2000) return res.status(413).json({ error: 'text_too_long' });
+  // Rewrite local words the voice mispronounces. Speech only: the text on screen is
+  // untouched and stays spelled correctly.
+  const text = pronounce.apply(raw);
 
   try {
     const started = Date.now();
@@ -123,13 +127,49 @@ router.post('/speak', async (req, res) => {
       }
     }
     res.end();
-    console.log(`[voice] tts ${Date.now() - started}ms ${bytes}B "${text.slice(0, 50)}"`);
+    console.log(`[voice] tts ${Date.now() - started}ms ${bytes}B "${raw.slice(0, 50)}"`);
   } catch (e) {
     console.error('[voice/speak]', e.message);
     if (!res.headersSent) res.status(500).json({ error: 'tts_failed', detail: e.message });
     else res.end();
   }
 });
+
+// POST /api/voice/pronunciations/phonemize { text } -> { phonemes }
+//
+// Runs a plain-English respelling through Kokoro's OWN grapheme-to-phoneme pass. That is the
+// point: whatever IPA comes back is exactly what the voice would say for that spelling, so
+// storing it pins the pronunciation instead of hoping the respelling survives.
+//
+// Write "will key", get /wˈɪlki/, and the gym stops being called "wilk".
+router.post('/pronunciations/phonemize', async (req, res) => {
+  const text = String((req.body && req.body.text) || '').trim();
+  if (!text) return res.status(400).json({ error: 'empty_text' });
+  try {
+    const r = await fetch(`${cfg.tts.url}/dev/phonemize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, language: 'a' }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!r.ok) return res.status(502).json({ error: 'phonemize_failed', status: r.status });
+    const j = await r.json().catch(() => ({}));
+    const phonemes = String(j.phonemes || '').trim();
+    if (!phonemes) return res.status(502).json({ error: 'no_phonemes' });
+    res.json({ text, phonemes });
+  } catch (e) {
+    res.status(502).json({ error: 'phonemize_failed', detail: e.message });
+  }
+});
+
+// GET|POST|DELETE /api/voice/pronunciations — teach the voice a word.
+router.get('/pronunciations', (_req, res) => res.json(pronounce.all()));
+router.post('/pronunciations', (req, res) => {
+  try { res.json(pronounce.set(req.body || {})); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+router.delete('/pronunciations/:word', (req, res) =>
+  res.json({ removed: pronounce.remove(req.params.word) }));
 
 // GET /api/voice/status — what the conversation UI needs to know before it starts.
 router.get('/status', async (_req, res) => {

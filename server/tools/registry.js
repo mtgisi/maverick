@@ -637,8 +637,8 @@ const TOOLS = [
     }, required: ['word', 'say_as'] },
     handler: async (a) => {
       try {
-        const r = pronounce.set({ word: a.word, say_as: a.say_as });
-        return `Got it. "${r.word}" will be spoken as "${r.say_as}".`;
+        const r = await pronounce.setDerived({ word: a.word, say_as: a.say_as }, cfg.tts.url);
+        return `Got it. "${r.word}" will be spoken as "${r.say_as || r.phonemes}".`;
       } catch (e) { return `error: ${e.message}`; }
     },
   },

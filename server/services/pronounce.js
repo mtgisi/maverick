@@ -30,14 +30,18 @@ function all() {
 // phonemized to /kɹˈAɑnts ɔɹ kˌAˈɑɹ (stˈɑɹt ʌv kɹˈækən)ˈænts/, so the voice would have
 // said the word "or" and the whole parenthetical out loud. Descriptions belong in
 // `description`; `say_as` must be a single sound.
-const ALTERNATIVE = /\s+(or|aka|either|maybe|like|rhymes with|sort of|kind of)\s+/i;
+// Anchored to a word boundary at the START too, not just after whitespace: "like milky" is
+// a description and would have been read out as "like milky". A respelling that merely
+// BEGINS with these letters, such as "orson", is unaffected because the keyword must be
+// followed by a space.
+const ALTERNATIVE = /(^|\s)(or|aka|either|maybe|like|rhymes with|sort of|kind of|same as|similar to)\s+/i;
 
 function sanitizeSayAs(raw) {
   let v = String(raw || '').trim();
   if (!v) return { ok: false, error: 'say_as is empty' };
-  if (/[()\[\]{}"]/.test(v)) return { ok: false, problem: 'contains an aside in brackets or quotes', value: v };
-  if (ALTERNATIVE.test(v)) return { ok: false, problem: 'offers more than one alternative', value: v };
-  if (/[,;/]/.test(v)) return { ok: false, problem: 'lists alternatives', value: v };
+  if (/[()\[\]{}"]/.test(v)) return { ok: false, problem: 'has an aside in brackets or quotes, which would be read out', value: v };
+  if (ALTERNATIVE.test(v)) return { ok: false, problem: 'describes the sound rather than spelling it, so it would be read out word for word', value: v };
+  if (/[,;/]/.test(v)) return { ok: false, problem: 'lists more than one option, and only one can be spoken', value: v };
   v = v.replace(/\s+/g, ' ');
   if (!/^[a-z' -]+$/i.test(v)) return { ok: false, problem: 'contains characters that are not speakable letters', value: v };
   if (v.length > 40) return { ok: false, problem: 'is too long to be one word', value: v };
@@ -68,12 +72,45 @@ const normalizeForG2P = raw => String(raw || '')
 // ordinary respellings are never mistaken for IPA.
 const IPA_CHARS = /[ɹɑæɛɪʊʌəɔʃʒʧʤŋθðːɜɐᵻɚɝɡʔˈˌ]/;
 
+// Textbook IPA is not Kokoro's phoneme inventory, and the mismatches are silent: the audio
+// just comes out wrong. The one that bites is R.
+//
+// Measured by synthesising the same word both ways:
+//   [Krantz](/krænts/)   -> 15020 bytes   plain r, an alveolar TRILL, mangled
+//   [Krantz](/kɹˈænts/)  -> 15788 bytes   ɹ, the English approximant, correct
+//
+// A transcription copied from anywhere else will use r, g, tʃ, dʒ and straight quotes for
+// stress. Map them rather than making the user know which dialect of IPA this engine wants.
+const IPA_FIXES = [
+  [/r/g, 'ɹ'],            // trill -> English approximant. THE important one.
+  [/g/g, 'ɡ'],            // ASCII g -> U+0261 script g
+  [/t͡?ʃ/g, 'ʧ'],
+  [/d͡?ʒ/g, 'ʤ'],
+  [/['\u2019\u02c8]/g, 'ˈ'],   // straight or curly apostrophe -> primary stress
+  [/[,\u02cc]/g, 'ˌ'],          // comma -> secondary stress
+  [/[:\u02d0]/g, 'ː'],
+];
+
+function normalizeIPA(raw) {
+  let v = String(raw || '').trim();
+  const before = v;
+  for (const [re, to] of IPA_FIXES) v = v.replace(re, to);
+  v = v.replace(/\s+/g, ' ').trim();
+  // No stress mark at all reads flat. Kokoro's own G2P always emits one, so its absence
+  // means the transcription came from elsewhere; say so rather than silently guessing.
+  const noStress = !/[ˈˌ]/.test(v);
+  return { value: v, changed: v !== before, noStress };
+}
+
 function parseSayAs(raw) {
   let v = String(raw || '').trim();
   if (!v) return { kind: 'empty' };
   // /krænts/ and [krænts] are how transcriptions are usually written down.
   const unwrapped = v.replace(/^[/[]|[/\]]$/g, '').trim();
-  if (IPA_CHARS.test(unwrapped)) return { kind: 'ipa', value: unwrapped };
+  if (IPA_CHARS.test(unwrapped)) {
+    const n = normalizeIPA(unwrapped);
+    return { kind: 'ipa', value: n.value, corrected: n.changed, noStress: n.noStress };
+  }
   return { kind: 'respelling', value: v };
 }
 
@@ -94,8 +131,8 @@ function set({ word, say_as, phonemes, note, description }) {
     const clean = sanitizeSayAs(say_as);
     if (!clean.ok) {
       throw new Error(`"${clean.value || say_as}" ${clean.problem || clean.error}. `
-        + `say_as must be a single respelling that can be read aloud, e.g. "will key". `
-        + `Put the explanation in description instead.`);
+        + `Write it the way it SOUNDS, as one word or phrase: "wilky", "crants". `
+        + `The explanation belongs in the description field.`);
     }
     say_as = clean.value;
   }
@@ -161,6 +198,34 @@ function apply(text, entries = all()) {
   return result;
 }
 
+// Ask the engine for the phonemes of a respelling. Lives here so every path that stores a
+// pronunciation derives them the same way: previously only the HTTP route did, so a word
+// taught by voice ("pronounce Wilke as will key") was stored with none and fell back to
+// plain text substitution.
+async function phonemize(text, ttsUrl) {
+  const t = normalizeForG2P(text);
+  if (!t) return null;
+  try {
+    const r = await fetch(`${ttsUrl}/dev/phonemize`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: t, language: 'a' }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!r.ok) return null;
+    return String((await r.json()).phonemes || '').trim() || null;
+  } catch (_) { return null; }
+}
+
+// Store a pronunciation, deriving the phonemes when a respelling was given and none were.
+// Falls back to plain substitution if the engine is unreachable, which still works.
+async function setDerived(entry, ttsUrl) {
+  const parsed = entry.say_as ? parseSayAs(entry.say_as) : null;
+  if (parsed && parsed.kind === 'respelling' && !entry.phonemes) {
+    entry = { ...entry, phonemes: await phonemize(parsed.value, ttsUrl) };
+  }
+  return set(entry);
+}
+
 // Seeded once, so the voice says the gym correctly out of the box and there is a worked
 // example to copy when adding more.
 function seed() {
@@ -174,4 +239,4 @@ function seed() {
   }
 }
 
-module.exports = { all, get, set, remove, apply, seed, sanitizeSayAs, normalizeForG2P, parseSayAs };
+module.exports = { all, get, set, remove, apply, seed, sanitizeSayAs, normalizeForG2P, parseSayAs, normalizeIPA, phonemize, setDerived };

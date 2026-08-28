@@ -657,7 +657,7 @@ async function loadPronunciations(){
 
 // Form state lives in S because render() rebuilds innerHTML: anything typed into a field
 // that is not mirrored here would vanish on the next render.
-const blankPronForm = () => ({ word:'', description:'', say_as:'', phonemes:null, busy:false, error:'', defaultFor:null, defaultPhonemes:null });
+const blankPronForm = () => ({ word:'', description:'', say_as:'', phonemes:null, busy:false, error:'', note:'', defaultFor:null, defaultPhonemes:null });
 
 // Turn the description into one respelling. The description is where you explain it however
 // you like ("Crayonts, or kr like the start of kracken, then -ants"); this reduces that to a
@@ -694,10 +694,17 @@ async function interpretPronunciation(){
 async function rephonemize(){
   const f=S.pronForm;
   if(!f.say_as.trim()) return;
-  f.busy=true; render();
+  f.busy=true; f.note=''; render();
   try {
     const r=await api('/voice/pronunciations/phonemize',{method:'POST',body:JSON.stringify({text:f.say_as.trim()})});
     f.phonemes=(r&&r.phonemes)||null;
+    // Pasted IPA usually needs mapping into this engine's inventory. Say so, because the
+    // symptom otherwise is just "the R sounds wrong" with nothing to point at.
+    if(r&&r.kind==='ipa'){
+      f.note = r.corrected
+        ? `Adjusted to this engine's symbols${r.noStress?', and it has no stress mark, which can sound flat':''}.`
+        : (r.noStress?'No stress mark in that transcription; it may sound flat.':'');
+    } else f.note='';
   } catch(_){}
   f.busy=false; render();
 }
@@ -769,7 +776,8 @@ function pronounceView(){
     <label class="fld">
       <span class="fl">Say it as \u2014 a respelling, or paste IPA like /kr\u00e6nts/</span>
       <input id="pronSay" data-pf="say_as" value="${esc(f.say_as)}" placeholder="krantz">
-      <span class="fh">${f.phonemes?esc(f.phonemes):'nothing converted yet'}</span>
+      <span class="fh">${f.phonemes?'/'+esc(f.phonemes)+'/':'nothing converted yet'}</span>
+      ${f.note?`<span class="fh dim">${esc(f.note)}</span>`:''}
     </label>
     <div class="actions">
       <button class="btn" data-act="pron-save" ${f.busy?'disabled':''}>Save</button>

@@ -240,6 +240,14 @@ Respelling:`;
 router.post('/pronunciations/phonemize', async (req, res) => {
   const text = String((req.body && req.body.text) || '').trim();
   if (!text) return res.status(400).json({ error: 'empty_text' });
+
+  // Already a transcription? Then there is nothing to derive: map it into this engine's
+  // symbols and hand it straight back, flagging what had to change.
+  const parsed = pronounce.parseSayAs(text);
+  if (parsed.kind === 'ipa') {
+    return res.json({ text, kind: 'ipa', phonemes: parsed.value,
+                      corrected: !!parsed.corrected, noStress: !!parsed.noStress });
+  }
   try {
     const r = await fetch(`${cfg.tts.url}/dev/phonemize`, {
       method: 'POST',
@@ -251,7 +259,7 @@ router.post('/pronunciations/phonemize', async (req, res) => {
     const j = await r.json().catch(() => ({}));
     const phonemes = String(j.phonemes || '').trim();
     if (!phonemes) return res.status(502).json({ error: 'no_phonemes' });
-    res.json({ text, phonemes });
+    res.json({ text, kind: 'respelling', phonemes });
   } catch (e) {
     res.status(502).json({ error: 'phonemize_failed', detail: e.message });
   }
@@ -259,8 +267,8 @@ router.post('/pronunciations/phonemize', async (req, res) => {
 
 // GET|POST|DELETE /api/voice/pronunciations — teach the voice a word.
 router.get('/pronunciations', (_req, res) => res.json(pronounce.all()));
-router.post('/pronunciations', (req, res) => {
-  try { res.json(pronounce.set(req.body || {})); }
+router.post('/pronunciations', async (req, res) => {
+  try { res.json(await pronounce.setDerived(req.body || {}, cfg.tts.url)); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 router.delete('/pronunciations/:word', (req, res) =>

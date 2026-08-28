@@ -138,6 +138,22 @@ check('chat view sets the is-chat modifier', () => els.view.className === 'scrol
 S.tab = 'home'; sandbox.__app.renderAll();
 check('other views do not', () => els.view.className === 'scroll', els.view.className);
 
+// Settings must be reachable from EVERY screen. It was reachable only from home, because
+// the avatar lives in the home header and the sidebar is desktop-only, so on a phone the
+// other four tabs had no way in at all.
+for (const tab of ['home', 'calendar', 'tasks', 'spaces', 'chat']) {
+  S.tab = tab; S.detail = null;
+  sandbox.__app.renderAll();
+  const anywhere = [els.view, els.topbar, els.sidebar, els.chrome]
+    .some(e => /data-act="settings"/.test(e.innerHTML));
+  check(`settings reachable from the ${tab} tab`, anywhere,
+        { view: /settings/.test(els.view.innerHTML), topbar: /settings/.test(els.topbar.innerHTML) });
+  // And exactly one way in per layout, so it is never ambiguous where to tap.
+  const mobileEntries = (els.view.innerHTML + els.topbar.innerHTML).match(/data-act="settings"/g) || [];
+  check(`  ${tab}: exactly one mobile settings entry`, mobileEntries.length === 1, mobileEntries.length);
+}
+S.tab = 'home'; S.detail = null; sandbox.__app.renderAll();
+
 // The drawer and chrome are rendered separately from the view.
 S.drawer = true; sandbox.__app.renderAll();
 check('drawer renders', () => els.drawer.innerHTML.length > 100);

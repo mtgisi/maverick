@@ -61,6 +61,10 @@ button{background:none;border:none;cursor:pointer}
 .main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
 .scroll{flex:1;overflow-y:auto;overflow-x:hidden;padding:var(--s2) var(--gutter) var(--s3);-webkit-overflow-scrolling:touch}
 .topbar{flex:0 0 auto;padding:calc(var(--s2) + var(--safe-top)) var(--gutter) var(--s1)}
+/* Mobile topbar: the screen name, and the one way into Settings from any tab. */
+.topbar-mobile{display:flex;align-items:center;justify-content:space-between;gap:var(--s3)}
+.topbar-mobile .ttl{font-family:var(--serif);font-size:var(--t-xl);color:var(--ink);line-height:1.1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.avatar.sm{width:var(--s6);height:var(--s6);font-size:var(--t-sm)}
 
 /* Vertical rhythm. Blocks inside a view are separated by one rule, not by each block
    inventing its own margin. */
@@ -311,7 +315,7 @@ button{background:none;border:none;cursor:pointer}
   .lead h2{font-size:var(--t-3xl)}
   .mobile-only{display:none}
 }
-@media (max-width:879px),(pointer:coarse){ .desktop-only{display:none} }
+@media (max-width:879px),(pointer:coarse){ .desktop-only{display:none} .mobile-only{display:block} }
 
 /* ===== Animations ===== */
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(230,169,44,.5)}70%{box-shadow:0 0 0 12px rgba(230,169,44,0)}100%{box-shadow:0 0 0 0 rgba(230,169,44,0)}}

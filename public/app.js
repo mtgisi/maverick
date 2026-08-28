@@ -855,13 +855,23 @@ function renderAll(){
       </div>
     </div>`;
 
-  // topbar (desktop only; on mobile the greeting lives in the home view)
-  const titles={home:'Dashboard',calendar:'Calendar',tasks:'Tasks',spaces:'Spaces',chat:brand(),calendars:'Calendars'};
+  // topbar
+  //
+  // On mobile this used to render nothing but padding, which left Settings reachable ONLY
+  // from the avatar in the home header. Every other tab had no way in at all. It now carries
+  // a settings button on every screen except home, where the header already has one, so
+  // there is always exactly one way in and it is always in the same corner.
+  const titles={home:'Dashboard',calendar:'Calendar',tasks:'Tasks',spaces:'Spaces',chat:brand(),calendars:'Calendars',pronounce:'Pronunciation'};
+  const title = esc(S.detail?titles[S.detail]||'Detail':titles[S.tab]||'');
   document.getElementById('topbar').innerHTML =
     `<div class="desktop-only">
-       <div class="ttl">${esc(S.detail?titles[S.detail]||'Detail':titles[S.tab]||'')}</div>
+       <div class="ttl">${title}</div>
        <div class="sub">${esc(todayStr())} \u00b7 ${S.role==='All'?'All spaces':esc(roleLabel(S.role))+' space'}</div>
-     </div>`;
+     </div>
+     ${(S.tab==='home' && !S.detail) ? '' : `<div class="mobile-only topbar-mobile">
+       <div class="ttl">${title}</div>
+       <button class="avatar sm" data-act="settings" aria-label="Settings">${esc(initials())}</button>
+     </div>`}`;
 
   // main view
   let html;

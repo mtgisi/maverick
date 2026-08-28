@@ -139,6 +139,21 @@ button{background:none;border:none;cursor:pointer}
 .src-tag{font-family:var(--mono);font-size:var(--t-2xs);letter-spacing:0.08em;text-transform:uppercase;padding:var(--s1) var(--s2);border-radius:6px;white-space:nowrap;color:var(--gold-3);border:1px solid rgba(230,169,44,0.35);background:rgba(230,169,44,0.07);flex:0 0 auto}
 .src-tag.personal{color:var(--sage);border-color:rgba(156,169,128,0.35);background:rgba(156,169,128,0.08)}
 
+/* ===== Forms ===== */
+.form{display:flex;flex-direction:column;gap:var(--s3)}
+.fld{display:flex;flex-direction:column;gap:var(--s1)}
+.fl{font-family:var(--mono);font-size:var(--t-2xs);letter-spacing:0.1em;text-transform:uppercase;color:var(--faint)}
+.fh{font-family:var(--mono);font-size:var(--t-xs);color:var(--sage);overflow-wrap:anywhere}
+.fe{font-size:var(--t-md);color:var(--warn);line-height:1.45}
+.fld input,.fld textarea{
+  width:100%;background:rgba(0,0,0,.25);border:1px solid var(--line-2);border-radius:var(--r-btn);
+  padding:var(--s2) var(--s3);color:var(--ink);font-size:var(--t-base);font-family:inherit;
+  outline:none;resize:vertical;line-height:1.45;
+}
+.fld input:focus,.fld textarea:focus{border-color:var(--gold-3)}
+.fld input::placeholder,.fld textarea::placeholder{color:var(--dim)}
+.btn[disabled]{opacity:.55;cursor:default}
+
 /* ===== Stat blocks (used by the sample detail screens) ===== */
 .stat{display:flex;flex-direction:column;gap:var(--s1)}
 .stat .n{font-family:var(--mono);font-size:var(--t-xl);color:var(--ink);line-height:1}

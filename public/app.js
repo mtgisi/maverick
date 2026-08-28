@@ -78,7 +78,7 @@ const S = {
   drawer:false, conv:'web',
   // tasks (unified charliework + goosework mirror)
   taskSource:'All', taskCounts:null, taskSources:[], tasksUnsynced:0,
-  calendars:null, pron:null, pronBusy:null,
+  calendars:null, pron:null, pronForm:null,
   // voice
   convMode:false, dictating:false, voiceState:'idle', voiceError:'', streaming:'', tool:null,
 };
@@ -655,29 +655,58 @@ async function loadPronunciations(){
   catch(_){ S.pron = []; }
 }
 
-async function addPronunciation(){
-  const word=(prompt('Which word does it say wrong?')||'').trim();
-  if(!word) return;
-  const sayAs=(prompt(`How should "${word}" sound?\nWrite it the way you would say it, e.g. "will key".`)||'').trim();
-  if(!sayAs) return;
-  await savePronunciation(word, sayAs);
+// Form state lives in S because render() rebuilds innerHTML: anything typed into a field
+// that is not mirrored here would vanish on the next render.
+const blankPronForm = () => ({ word:'', description:'', say_as:'', phonemes:null, busy:false, error:'' });
+
+// Turn the description into one respelling. The description is where you explain it however
+// you like ("Crayonts, or kr like the start of kracken, then -ants"); this reduces that to a
+// single sound, because the respelling is read out literally and an explanation would be
+// spoken word for word.
+async function interpretPronunciation(){
+  const f=S.pronForm;
+  if(!f.word.trim() || !f.description.trim()){ f.error='Give the word and a description first.'; render(); return; }
+  f.busy=true; f.error=''; render();
+  try {
+    const r=await api('/voice/pronunciations/interpret',{method:'POST',
+      body:JSON.stringify({word:f.word.trim(),description:f.description.trim()})});
+    if(r.error){ f.error=r.detail||r.error; }
+    else { f.say_as=r.say_as||''; f.phonemes=r.phonemes||null; }
+  } catch(e){ f.error='Could not work that out. Write the respelling yourself.'; }
+  f.busy=false; render();
 }
 
-async function savePronunciation(word, sayAs){
-  S.pronBusy=word; render();
+// Re-derive the phonemes from whatever respelling is in the field right now, so an edit by
+// ear is picked up without going back through the description.
+async function rephonemize(){
+  const f=S.pronForm;
+  if(!f.say_as.trim()) return;
+  f.busy=true; render();
   try {
-    // Convert the respelling through Kokoro's own G2P so the stored phonemes are exactly
-    // what it would say for that spelling. Falls back to the plain respelling if the
-    // phonemizer is unavailable, which still works, just less precisely.
-    let phonemes=null;
-    try {
-      const r=await api('/voice/pronunciations/phonemize',{method:'POST',body:JSON.stringify({text:sayAs})});
-      phonemes=r&&r.phonemes||null;
-    } catch(_){}
-    await api('/voice/pronunciations',{method:'POST',body:JSON.stringify({word,say_as:sayAs,phonemes})});
+    const r=await api('/voice/pronunciations/phonemize',{method:'POST',body:JSON.stringify({text:f.say_as.trim()})});
+    f.phonemes=(r&&r.phonemes)||null;
   } catch(_){}
-  S.pronBusy=null;
+  f.busy=false; render();
+}
+
+async function savePronForm(){
+  const f=S.pronForm;
+  if(!f.word.trim() || !f.say_as.trim()){ f.error='Needs a word and a respelling.'; render(); return; }
+  f.busy=true; f.error=''; render();
+  try {
+    const r=await api('/voice/pronunciations',{method:'POST',body:JSON.stringify({
+      word:f.word.trim(), say_as:f.say_as.trim(), phonemes:f.phonemes, description:f.description.trim()||null })});
+    if(r&&r.error){ f.error=r.error; f.busy=false; render(); return; }
+    S.pronForm=blankPronForm();
+  } catch(e){ f.error='Could not save that.'; f.busy=false; render(); return; }
   await loadPronunciations(); render();
+}
+
+function editPronunciation(word){
+  const e=(S.pron||[]).find(x=>x.word===word); if(!e) return;
+  S.pronForm={ word:e.word, description:e.description||'', say_as:e.say_as||'', phonemes:e.phonemes||null, busy:false, error:'' };
+  render();
+  const el=document.getElementById('pronDesc'); if(el) el.focus();
 }
 
 async function delPronunciation(word){
@@ -686,24 +715,12 @@ async function delPronunciation(word){
   await loadPronunciations(); render();
 }
 
-async function convertAllPronunciations(){
-  S.pronBusy='*'; render();
-  for(const e of (S.pron||[])){
-    if(!e.say_as) continue;
-    try {
-      const r=await api('/voice/pronunciations/phonemize',{method:'POST',body:JSON.stringify({text:e.say_as})});
-      if(r&&r.phonemes) await api('/voice/pronunciations',{method:'POST',body:JSON.stringify({word:e.word,say_as:e.say_as,phonemes:r.phonemes})});
-    } catch(_){}
-  }
-  S.pronBusy=null;
-  await loadPronunciations(); render();
-}
-
-// Say the word out loud so you can check the fix by ear, which is the only test that counts.
-async function previewPronunciation(word){
+// Say it out loud. The ear is the only test that counts, so this speaks the respelling
+// exactly as the dictionary would.
+async function previewPronunciation(text){
   try {
     const r=await fetch('/api/voice/speak',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({text:word})});
+      body:JSON.stringify({text})});
     if(!r.ok) return;
     const url=URL.createObjectURL(await r.blob());
     const a=new Audio(url); a.onended=()=>URL.revokeObjectURL(url); a.play().catch(()=>{});
@@ -711,40 +728,57 @@ async function previewPronunciation(word){
 }
 
 function pronounceView(){
+  const f=S.pronForm||(S.pronForm=blankPronForm());
   const back = `<div class="dhead">
     <button class="back" data-act="back" aria-label="Back">\u2190</button>
     <div class="grow"><div class="sub">Settings</div><div class="ttl">Pronunciation</div></div>
-    <button class="btn sm" data-act="pron-add">+ Add</button>
   </div>`;
   if(!S.pron) return back + `<div class="empty">Loading\u2026</div>`;
 
-  const intro = `<p class="cal-intro">The voice guesses at names it has not seen and gets local ones
-    wrong. Write the word, then write how it <b>sounds</b> in plain letters, and
-    ${esc(brand())} converts that to the exact phonemes it will speak.</p>`;
+  const form = `<div class="lead form">
+    <div class="now"><span class="dot"></span><span class="t">${f.word&&(S.pron||[]).some(x=>x.word===f.word)?'Editing':'Add a word'}</span></div>
+    <label class="fld">
+      <span class="fl">Word, spelled normally</span>
+      <input id="pronWord" data-pf="word" value="${esc(f.word)}" placeholder="Krantz" autocapitalize="words">
+    </label>
+    <label class="fld">
+      <span class="fl">How does it sound? Explain it however you like.</span>
+      <textarea id="pronDesc" data-pf="description" rows="3"
+        placeholder="Crayonts, or kr like the start of kracken, then -ants">${esc(f.description)}</textarea>
+    </label>
+    <div class="actions">
+      <button class="btn" data-act="pron-interpret" ${f.busy?'disabled':''}>${f.busy?'Working\u2026':'Work out the sound'}</button>
+      ${f.say_as?`<button class="btn ghost" data-act="pron-preview-form">Hear it</button>`:''}
+      ${f.word||f.description?`<button class="btn ghost" data-act="pron-cancel">Clear</button>`:''}
+    </div>
+    ${f.say_as?`<label class="fld">
+      <span class="fl">Say it as \u2014 edit by ear if it is not right</span>
+      <input id="pronSay" data-pf="say_as" value="${esc(f.say_as)}">
+      <span class="fh">${f.phonemes?esc(f.phonemes):'not converted yet'}</span>
+    </label>
+    <div class="actions">
+      <button class="btn" data-act="pron-save" ${f.busy?'disabled':''}>Save</button>
+      <button class="btn ghost" data-act="pron-rephon" ${f.busy?'disabled':''}>Re-convert</button>
+    </div>`:''}
+    ${f.error?`<div class="fe">${esc(f.error)}</div>`:''}
+  </div>`;
 
-  const rows = S.pron.length ? `<div class="cal-list">${S.pron.map(e=>`
-    <div class="cal-row${S.pronBusy===e.word||S.pronBusy==='*'?' missing':''}">
+  const rows = S.pron.length ? `<div class="section-label">Corrected words</div>
+    <div class="cal-list">${S.pron.map(e=>`
+    <div class="cal-row">
       <div class="cal-name">
-        <div class="n">${esc(e.word)}</div>
-        <div class="m">says \u201c${esc(e.say_as||'')}\u201d${e.phonemes?' \u00b7 '+esc(e.phonemes):' \u00b7 not converted'}</div>
+        <div class="n">${esc(e.word)} <span class="cal-flag">${esc(e.say_as||'')}</span></div>
+        <div class="m">${e.phonemes?esc(e.phonemes):'not converted'}${e.description?' \u00b7 '+esc(e.description.slice(0,52)):''}</div>
       </div>
       <div class="seg">
         <button class="seg-btn" data-pron-play="${esc(e.word)}" title="Hear it">\u25b6</button>
-        <button class="seg-btn" data-pron-edit="${esc(e.word)}" title="Change how it sounds">\u270e</button>
+        <button class="seg-btn" data-pron-edit="${esc(e.word)}" title="Change it">\u270e</button>
         <button class="seg-btn" data-pron-del="${esc(e.word)}" title="Remove">\u2715</button>
       </div>
     </div>`).join('')}</div>`
-    : `<div class="empty">Nothing corrected yet. Tap <b>+ Add</b> when the voice mangles a name.</div>`;
+    : `<div class="empty">Nothing corrected yet. Add the first word above.</div>`;
 
-  const convert = S.pron.length
-    ? `<div class="lead row-between">
-         <div><div class="v">Re-convert every entry</div>
-           <div class="m">Runs each spelling through the voice again. Use it after editing several.</div></div>
-         <button class="btn" data-act="pron-convert">${S.pronBusy==='*'?'Working\u2026':'Convert all'}</button>
-       </div>`
-    : '';
-
-  return back + intro + rows + convert;
+  return back + form + rows;
 }
 
 /* demo detail views (Aureo design, placeholder data) */
@@ -957,12 +991,7 @@ document.addEventListener('click', e=>{
   if(t.dataset.role){ S.role=t.dataset.role; render(); return; }
   if(t.dataset.pronPlay){ previewPronunciation(t.dataset.pronPlay); return; }
   if(t.dataset.pronDel){ delPronunciation(t.dataset.pronDel); return; }
-  if(t.dataset.pronEdit){
-    const cur=(S.pron||[]).find(x=>x.word===t.dataset.pronEdit);
-    const v=prompt(`How should "${t.dataset.pronEdit}" sound?`, (cur&&cur.say_as)||'');
-    if(v&&v.trim()) savePronunciation(t.dataset.pronEdit, v.trim());
-    return;
-  }
+  if(t.dataset.pronEdit){ editPronunciation(t.dataset.pronEdit); return; }
   if(t.dataset.calMode){
     setCalendarMode(t.dataset.calAcct, t.dataset.calId, t.dataset.calMode, t.dataset.calLabel);
     return;
@@ -996,8 +1025,11 @@ document.addEventListener('click', e=>{
   else if(a==='back'){ S.detail=null; render(); }
   else if(a==='why'){ S.whyOpen=!S.whyOpen; render(); }
   else if(a==='conv'){ toggleConversation(); }
-  else if(a==='pron-add'){ addPronunciation(); }
-  else if(a==='pron-convert'){ convertAllPronunciations(); }
+  else if(a==='pron-interpret'){ interpretPronunciation(); }
+  else if(a==='pron-save'){ savePronForm(); }
+  else if(a==='pron-rephon'){ rephonemize(); }
+  else if(a==='pron-preview-form'){ previewPronunciation(S.pronForm.say_as||S.pronForm.word); }
+  else if(a==='pron-cancel'){ S.pronForm=blankPronForm(); render(); }
   else if(a==='send'){ const inp=document.getElementById('chatInput'); S.chatInput=inp?inp.value:''; send(); }
   else if(a==='chat-plan'){ send('Plan my day and tell me what to start with.'); }
   else if(a==='clear-chat'){
@@ -1026,7 +1058,12 @@ document.addEventListener('pointerdown', e=>{
 document.addEventListener('pointerup', e=>{ if(S.dictating) dictateStop(); });
 document.addEventListener('pointercancel', ()=>{ if(S.dictating) dictateStop(); });
 
-document.addEventListener('input', e=>{ if(e.target.id==='chatInput') S.chatInput=e.target.value; });
+document.addEventListener('input', e=>{
+  if(e.target.id==='chatInput'){ S.chatInput=e.target.value; return; }
+  // Form fields mirror into state, or a render triggered by anything else wipes what was typed.
+  const f=e.target.dataset && e.target.dataset.pf;
+  if(f && S.pronForm) S.pronForm[f]=e.target.value;
+});
 document.addEventListener('keydown', e=>{ if(e.target.id==='chatInput' && e.key==='Enter'){ S.chatInput=e.target.value; send(); } });
 document.getElementById('scrim').addEventListener('click', ()=>{ S.drawer=false; render(); });
 

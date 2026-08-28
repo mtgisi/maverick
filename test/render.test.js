@@ -89,8 +89,10 @@ S.taskCounts = { open: 67, overdue: 6, due_soon: 0, by_source: { charliework: 62
 S.tasksUnsynced = 1;
 S.messages = [{ from: 'user', text: 'what is on my calendar' }, { from: 'ai', text: 'Three things **today**.' }];
 S.pending = [{ id: 1, summary: 'Clock-out 5:34 PM -> 6:34 PM' }];
-S.pron = [{ word: 'Wilke', say_as: 'will key', phonemes: 'wˈɪlki', note: 'the gym' },
-          { word: 'Krantz', say_as: 'krants', phonemes: null }];
+S.pron = [{ word: 'Wilke', say_as: 'will key', phonemes: 'wˈɪlki', description: 'like milky with a W' },
+          { word: 'Krantz', say_as: 'krahnts', phonemes: 'kɹˈɑnts', description: 'Crayonts or kr (start of kracken)-ants' }];
+S.pronForm = { word: 'Sielaff', description: 'see-loff, rhymes with cough', say_as: 'see loff',
+               phonemes: 'sˈi lˈɑf', busy: false, error: '' };
 S.calendars = { connected: true, modes: ['agenda', 'reference', 'off'], counts: {},
   calendars: [{ id: 'a@x', account: 'work', summary: 'EHS Birthdays', kind: 'owned', mode: 'reference', explicit: true },
               { id: 'b@x', account: 'work', summary: 'Gone', kind: 'unknown', mode: 'off', explicit: true, missing: true }] };

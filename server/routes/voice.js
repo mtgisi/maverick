@@ -15,6 +15,7 @@
 const express = require('express');
 const cfg = require('../config');
 const pronounce = require('../services/pronounce');
+const ollama = require('../brain/ollama');
 
 const router = express.Router();
 
@@ -135,6 +136,76 @@ router.post('/speak', async (req, res) => {
   }
 });
 
+// POST /api/voice/pronunciations/interpret { word, description } -> { say_as, phonemes }
+//
+// Turn a free-text description into ONE respelling, then phonemize it.
+//
+// Describing a sound is naturally full of alternatives and asides: "Crayonts or kr (start
+// of kracken)-ants". Stored verbatim, all of that is spoken aloud, "or" and brackets
+// included. So the description is distilled first, and the result is validated hard: the
+// model is a convenience here, not an authority, and a bad respelling is worse than none.
+router.post('/pronunciations/interpret', async (req, res) => {
+  const word = String((req.body && req.body.word) || '').trim();
+  const description = String((req.body && req.body.description) || '').trim();
+  if (!word || !description) return res.status(400).json({ error: 'word and description required' });
+
+  const prompt = `A person is explaining how to say the name "${word}" out loud.
+
+Their explanation: ${description}
+
+Rewrite it as ONE respelling of the sound.
+Rules:
+- Output the respelling and NOTHING else. No quotes, no explanation, no alternatives.
+- All lower case. Letters and spaces only. No hyphens, no capitals, no punctuation.
+- Never leave a single letter on its own: write "kruh" or "kra", never "k".
+- Spell it the way it SOUNDS, as if teaching a child to read it.
+- If they gave several options, pick the first clear one.
+
+Examples:
+  "like milky but with a W" -> will key
+  "juh-LAM-us, soft J"      -> juh lam us
+  "rhymes with wants"       -> krahnts
+
+Respelling:`;
+
+  let candidate = '';
+  try {
+    const out = await ollama.chat({ messages: [{ role: 'user', content: prompt }] });
+    candidate = String((out.message && out.message.content) || '').trim();
+  } catch (e) {
+    return res.status(503).json({ error: 'brain_offline', detail: e.message });
+  }
+
+  // Take the first line and strip the ways a small model dresses up a one-word answer.
+  candidate = candidate.split('\n').map(x => x.trim()).filter(Boolean)[0] || '';
+  candidate = candidate.replace(/^respelling\s*:\s*/i, '')
+    .replace(/^["'\u201c\u2018]|["'\u201d\u2019]$/g, '')
+    .replace(/[.!]+$/, '')
+    .trim();
+
+  const clean = pronounce.sanitizeSayAs(candidate);
+  if (!clean.ok) {
+    return res.status(422).json({
+      error: 'could_not_distil',
+      candidate,
+      detail: `The model returned "${candidate}", which ${clean.problem || clean.error}. Write the respelling yourself.`,
+    });
+  }
+
+  // Phonemize through Kokoro's own G2P so the stored IPA is exactly what it will speak.
+  let phonemes = null;
+  try {
+    const r = await fetch(`${cfg.tts.url}/dev/phonemize`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: pronounce.normalizeForG2P(clean.value), language: 'a' }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (r.ok) phonemes = String((await r.json()).phonemes || '').trim() || null;
+  } catch (_) {}
+
+  res.json({ word, say_as: clean.value, phonemes, description });
+});
+
 // POST /api/voice/pronunciations/phonemize { text } -> { phonemes }
 //
 // Runs a plain-English respelling through Kokoro's OWN grapheme-to-phoneme pass. That is the
@@ -149,7 +220,7 @@ router.post('/pronunciations/phonemize', async (req, res) => {
     const r = await fetch(`${cfg.tts.url}/dev/phonemize`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, language: 'a' }),
+      body: JSON.stringify({ text: pronounce.normalizeForG2P(text), language: 'a' }),
       signal: AbortSignal.timeout(15000),
     });
     if (!r.ok) return res.status(502).json({ error: 'phonemize_failed', status: r.status });

@@ -187,6 +187,7 @@ function addColumn(table, column, decl) {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
   if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
 }
+addColumn('pronunciations', 'description', 'TEXT');  // what the user wrote, before distilling
 addColumn('conversations', 'summary', 'TEXT');           // rolling summary of folded-out turns
 addColumn('conversations', 'summary_upto', 'INTEGER');   // highest messages.id covered by it
 

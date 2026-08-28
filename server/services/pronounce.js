@@ -23,19 +23,68 @@ function all() {
   catch (_) { return []; }
 }
 
-function set({ word, say_as, phonemes, note }) {
+// A respelling is ONE way to say the word. It is spoken literally, so anything that is
+// commentary rather than sound ends up being read aloud.
+//
+// This is not hypothetical: an entry saved as "Crayonts or  kr (start of kracken)-ants"
+// phonemized to /kɹˈAɑnts ɔɹ kˌAˈɑɹ (stˈɑɹt ʌv kɹˈækən)ˈænts/, so the voice would have
+// said the word "or" and the whole parenthetical out loud. Descriptions belong in
+// `description`; `say_as` must be a single sound.
+const ALTERNATIVE = /\s+(or|aka|either|maybe|like|rhymes with|sort of|kind of)\s+/i;
+
+function sanitizeSayAs(raw) {
+  let v = String(raw || '').trim();
+  if (!v) return { ok: false, error: 'say_as is empty' };
+  if (/[()\[\]{}"]/.test(v)) return { ok: false, problem: 'contains an aside in brackets or quotes', value: v };
+  if (ALTERNATIVE.test(v)) return { ok: false, problem: 'offers more than one alternative', value: v };
+  if (/[,;/]/.test(v)) return { ok: false, problem: 'lists alternatives', value: v };
+  v = v.replace(/\s+/g, ' ');
+  if (!/^[a-z' -]+$/i.test(v)) return { ok: false, problem: 'contains characters that are not speakable letters', value: v };
+  if (v.length > 40) return { ok: false, problem: 'is too long to be one word', value: v };
+  return { ok: true, value: v };
+}
+
+// Kokoro's G2P is case- and hyphen-sensitive in ways that ruin a respelling.
+// Measured against the running service:
+//
+//   "KRAHNTS"     -> /kˌAˌɑɹˌAˌAʧˌɛntˌiˈɛs/    it spells the letters out
+//   "krahnts"     -> /kɹˈɑnts/                  correct
+//   "juh-LAH-mus" -> /ʤˈʌˌɛlˌAˈAʧmˈʌs/          hyphen plus caps, garbage
+//   "juh lah mus" -> /ʤˈʌ lˈɑ mjˈuz/            usable
+//
+// So a respelling is lowercased and hyphens become spaces before it is phonemized. This is
+// applied to what gets SENT to the phonemizer; the stored respelling keeps what was typed.
+const normalizeForG2P = raw => String(raw || '')
+  .toLowerCase()
+  .replace(/[-_]+/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+function set({ word, say_as, phonemes, note, description }) {
   const w = String(word || '').trim();
   if (!w) throw new Error('word is required');
   if (!String(say_as || '').trim() && !String(phonemes || '').trim()) {
     throw new Error('give either say_as (a respelling) or phonemes (IPA)');
   }
+  if (say_as) {
+    const clean = sanitizeSayAs(say_as);
+    if (!clean.ok) {
+      throw new Error(`"${clean.value || say_as}" ${clean.problem || clean.error}. `
+        + `say_as must be a single respelling that can be read aloud, e.g. "will key". `
+        + `Put the explanation in description instead.`);
+    }
+    say_as = clean.value;
+  }
   db.prepare(`
-    INSERT INTO pronunciations (word, say_as, phonemes, note, updated_at)
-    VALUES (@word, @say_as, @phonemes, @note, datetime('now'))
+    INSERT INTO pronunciations (word, say_as, phonemes, note, description, updated_at)
+    VALUES (@word, @say_as, @phonemes, @note, @description, datetime('now'))
     ON CONFLICT(word) DO UPDATE SET
       say_as=excluded.say_as, phonemes=excluded.phonemes,
-      note=COALESCE(excluded.note, pronunciations.note), updated_at=datetime('now')
-  `).run({ word: w, say_as: say_as || null, phonemes: phonemes || null, note: note || null });
+      note=COALESCE(excluded.note, pronunciations.note),
+      description=COALESCE(excluded.description, pronunciations.description),
+      updated_at=datetime('now')
+  `).run({ word: w, say_as: say_as || null, phonemes: phonemes || null,
+           note: note || null, description: description || null });
   return get(w);
 }
 
@@ -101,4 +150,4 @@ function seed() {
   }
 }
 
-module.exports = { all, get, set, remove, apply, seed };
+module.exports = { all, get, set, remove, apply, seed, sanitizeSayAs, normalizeForG2P };

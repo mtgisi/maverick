@@ -657,12 +657,25 @@ async function loadPronunciations(){
 
 // Form state lives in S because render() rebuilds innerHTML: anything typed into a field
 // that is not mirrored here would vanish on the next render.
-const blankPronForm = () => ({ word:'', description:'', say_as:'', phonemes:null, busy:false, error:'' });
+const blankPronForm = () => ({ word:'', description:'', say_as:'', phonemes:null, busy:false, error:'', defaultFor:null, defaultPhonemes:null });
 
 // Turn the description into one respelling. The description is where you explain it however
 // you like ("Crayonts, or kr like the start of kracken, then -ants"); this reduces that to a
 // single sound, because the respelling is read out literally and an explanation would be
 // spoken word for word.
+// What the voice says with no correction at all. Shown so an override is a decision:
+// "Krantz" already renders as /kɹˈænts/, and the entry added for it was replacing a correct
+// default with a wrong vowel.
+async function loadPronDefault(){
+  const f=S.pronForm; const w=(f.word||'').trim();
+  if(!w || w===f.defaultFor) return;
+  f.defaultFor=w; f.defaultPhonemes=null; render();
+  try {
+    const r=await api('/voice/pronunciations/default?word='+encodeURIComponent(w));
+    if(f.word.trim()===w){ f.defaultPhonemes=(r&&r.phonemes)||null; render(); }
+  } catch(_){}
+}
+
 async function interpretPronunciation(){
   const f=S.pronForm;
   if(!f.word.trim() || !f.description.trim()){ f.error='Give the word and a description first.'; render(); return; }
@@ -704,7 +717,8 @@ async function savePronForm(){
 
 function editPronunciation(word){
   const e=(S.pron||[]).find(x=>x.word===word); if(!e) return;
-  S.pronForm={ word:e.word, description:e.description||'', say_as:e.say_as||'', phonemes:e.phonemes||null, busy:false, error:'' };
+  S.pronForm={ ...blankPronForm(), word:e.word, description:e.description||'', say_as:e.say_as||e.phonemes||'', phonemes:e.phonemes||null };
+  loadPronDefault();
   render();
   const el=document.getElementById('pronDesc'); if(el) el.focus();
 }
@@ -740,6 +754,7 @@ function pronounceView(){
     <label class="fld">
       <span class="fl">Word, spelled normally</span>
       <input id="pronWord" data-pf="word" value="${esc(f.word)}" placeholder="Krantz" autocapitalize="words">
+      ${f.defaultPhonemes?`<span class="fh dim">Without any correction the voice says <b>/${esc(f.defaultPhonemes)}/</b> \u2014 <span data-act="pron-preview-word" class="lnk">hear it</span>. Only override that if it is wrong.</span>`:''}
     </label>
     <label class="fld">
       <span class="fl">How does it sound? Explain it however you like.</span>
@@ -748,18 +763,18 @@ function pronounceView(){
     </label>
     <div class="actions">
       <button class="btn" data-act="pron-interpret" ${f.busy?'disabled':''}>${f.busy?'Working\u2026':'Work out the sound'}</button>
-      ${f.say_as?`<button class="btn ghost" data-act="pron-preview-form">Hear it</button>`:''}
+      ${(f.say_as||f.phonemes)?`<button class="btn ghost" data-act="pron-preview-form">Hear the fix</button>`:''}
       ${f.word||f.description?`<button class="btn ghost" data-act="pron-cancel">Clear</button>`:''}
     </div>
-    ${f.say_as?`<label class="fld">
-      <span class="fl">Say it as \u2014 edit by ear if it is not right</span>
-      <input id="pronSay" data-pf="say_as" value="${esc(f.say_as)}">
-      <span class="fh">${f.phonemes?esc(f.phonemes):'not converted yet'}</span>
+    <label class="fld">
+      <span class="fl">Say it as \u2014 a respelling, or paste IPA like /kr\u00e6nts/</span>
+      <input id="pronSay" data-pf="say_as" value="${esc(f.say_as)}" placeholder="krantz">
+      <span class="fh">${f.phonemes?esc(f.phonemes):'nothing converted yet'}</span>
     </label>
     <div class="actions">
       <button class="btn" data-act="pron-save" ${f.busy?'disabled':''}>Save</button>
-      <button class="btn ghost" data-act="pron-rephon" ${f.busy?'disabled':''}>Re-convert</button>
-    </div>`:''}
+      <button class="btn ghost" data-act="pron-rephon" ${f.busy?'disabled':''}>Convert</button>
+    </div>
     ${f.error?`<div class="fe">${esc(f.error)}</div>`:''}
   </div>`;
 
@@ -767,8 +782,8 @@ function pronounceView(){
     <div class="cal-list">${S.pron.map(e=>`
     <div class="cal-row">
       <div class="cal-name">
-        <div class="n">${esc(e.word)} <span class="cal-flag">${esc(e.say_as||'')}</span></div>
-        <div class="m">${e.phonemes?esc(e.phonemes):'not converted'}${e.description?' \u00b7 '+esc(e.description.slice(0,52)):''}</div>
+        <div class="n">${esc(e.word)}${e.say_as?` <span class="cal-flag">${esc(e.say_as)}</span>`:''}</div>
+        <div class="m">${e.phonemes?'/'+esc(e.phonemes)+'/':'not converted'}${e.description?' \u00b7 '+esc(e.description.slice(0,48)):''}</div>
       </div>
       <div class="seg">
         <button class="seg-btn" data-pron-play="${esc(e.word)}" title="Hear it">\u25b6</button>
@@ -1028,7 +1043,8 @@ document.addEventListener('click', e=>{
   else if(a==='pron-interpret'){ interpretPronunciation(); }
   else if(a==='pron-save'){ savePronForm(); }
   else if(a==='pron-rephon'){ rephonemize(); }
-  else if(a==='pron-preview-form'){ previewPronunciation(S.pronForm.say_as||S.pronForm.word); }
+  else if(a==='pron-preview-form'){ previewPronunciation(S.pronForm.word||S.pronForm.say_as); }
+  else if(a==='pron-preview-word'){ previewPronunciation(S.pronForm.word); }
   else if(a==='pron-cancel'){ S.pronForm=blankPronForm(); render(); }
   else if(a==='send'){ const inp=document.getElementById('chatInput'); S.chatInput=inp?inp.value:''; send(); }
   else if(a==='chat-plan'){ send('Plan my day and tell me what to start with.'); }
@@ -1062,7 +1078,10 @@ document.addEventListener('input', e=>{
   if(e.target.id==='chatInput'){ S.chatInput=e.target.value; return; }
   // Form fields mirror into state, or a render triggered by anything else wipes what was typed.
   const f=e.target.dataset && e.target.dataset.pf;
-  if(f && S.pronForm) S.pronForm[f]=e.target.value;
+  if(f && S.pronForm){
+    S.pronForm[f]=e.target.value;
+    if(f==='word'){ clearTimeout(S._pronT); S._pronT=setTimeout(loadPronDefault,500); }
+  }
 });
 document.addEventListener('keydown', e=>{ if(e.target.id==='chatInput' && e.key==='Enter'){ S.chatInput=e.target.value; send(); } });
 document.getElementById('scrim').addEventListener('click', ()=>{ S.drawer=false; render(); });

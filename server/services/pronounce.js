@@ -60,11 +60,35 @@ const normalizeForG2P = raw => String(raw || '')
   .replace(/\s+/g, ' ')
   .trim();
 
+// IPA, as a phonetic transcription rather than a respelling. Accepted because it is often
+// the most direct thing a person has: ChatGPT will hand you /krænts/, and being unable to
+// paste that in is a silly reason to be stuck.
+//
+// Detected by the presence of characters that only appear in phonetic transcription, so
+// ordinary respellings are never mistaken for IPA.
+const IPA_CHARS = /[ɹɑæɛɪʊʌəɔʃʒʧʤŋθðːɜɐᵻɚɝɡʔˈˌ]/;
+
+function parseSayAs(raw) {
+  let v = String(raw || '').trim();
+  if (!v) return { kind: 'empty' };
+  // /krænts/ and [krænts] are how transcriptions are usually written down.
+  const unwrapped = v.replace(/^[/[]|[/\]]$/g, '').trim();
+  if (IPA_CHARS.test(unwrapped)) return { kind: 'ipa', value: unwrapped };
+  return { kind: 'respelling', value: v };
+}
+
 function set({ word, say_as, phonemes, note, description }) {
   const w = String(word || '').trim();
   if (!w) throw new Error('word is required');
   if (!String(say_as || '').trim() && !String(phonemes || '').trim()) {
-    throw new Error('give either say_as (a respelling) or phonemes (IPA)');
+    throw new Error('give either a respelling ("will key") or IPA ("/krænts/")');
+  }
+  // IPA typed into the respelling field is phonemes, not a respelling. Route it rather than
+  // rejecting it for containing "characters that are not speakable letters", which is true
+  // and useless.
+  if (say_as) {
+    const parsed = parseSayAs(say_as);
+    if (parsed.kind === 'ipa') { phonemes = parsed.value; say_as = null; }
   }
   if (say_as) {
     const clean = sanitizeSayAs(say_as);
@@ -150,4 +174,4 @@ function seed() {
   }
 }
 
-module.exports = { all, get, set, remove, apply, seed, sanitizeSayAs, normalizeForG2P };
+module.exports = { all, get, set, remove, apply, seed, sanitizeSayAs, normalizeForG2P, parseSayAs };

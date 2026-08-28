@@ -136,6 +136,28 @@ router.post('/speak', async (req, res) => {
   }
 });
 
+// GET /api/voice/pronunciations/default?word=Krantz -> { phonemes }
+//
+// What the voice says for a word with NO correction. Worth knowing before overriding it:
+// Kokoro already renders "Krantz" as /kɹˈænts/, and the entry that had been added for it
+// was replacing a correct default with a wrong vowel. The screen shows this so a correction
+// is a considered choice rather than a guess.
+router.get('/pronunciations/default', async (req, res) => {
+  const word = String(req.query.word || '').trim();
+  if (!word) return res.status(400).json({ error: 'word required' });
+  try {
+    const r = await fetch(`${cfg.tts.url}/dev/phonemize`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: word, language: 'a' }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!r.ok) return res.status(502).json({ error: 'phonemize_failed' });
+    res.json({ word, phonemes: String((await r.json()).phonemes || '').trim() || null });
+  } catch (e) {
+    res.status(502).json({ error: 'phonemize_failed', detail: e.message });
+  }
+});
+
 // POST /api/voice/pronunciations/interpret { word, description } -> { say_as, phonemes }
 //
 // Turn a free-text description into ONE respelling, then phonemize it.
@@ -161,10 +183,12 @@ Rules:
 - Spell it the way it SOUNDS, as if teaching a child to read it.
 - If they gave several options, pick the first clear one.
 
+- If their description matches how the name is already spelled, just output the spelling.
+
 Examples:
-  "like milky but with a W" -> will key
-  "juh-LAM-us, soft J"      -> juh lam us
-  "rhymes with wants"       -> krahnts
+  "like milky but with a W"  -> will key
+  "juh-LAM-us, soft J"       -> juh lam us
+  "one syllable, short a"    -> krantz
 
 Respelling:`;
 

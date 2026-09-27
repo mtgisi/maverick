@@ -8,6 +8,7 @@ const express = require('express');
 const assistant = require('../assistant');
 const cfg = require('../config');
 const { transcribe } = require('./voice');
+const pronounce = require('../services/pronounce');
 
 const router = express.Router();
 
@@ -178,9 +179,13 @@ router.post('/stt', express.raw({ type: 'application/octet-stream', limit: '25mb
 // review, fold the two together — the duplication is deliberate, not accidental.
 router.post('/speak', async (req, res) => {
   if (!cfg.tts.enabled) return res.status(503).json({ error: 'tts_disabled' });
-  const text = String((req.body && req.body.text) || '').trim();
-  if (!text) return res.status(400).json({ error: 'empty_text' });
-  if (text.length > 2000) return res.status(413).json({ error: 'text_too_long' });
+  const raw = String((req.body && req.body.text) || '').trim();
+  if (!raw) return res.status(400).json({ error: 'empty_text' });
+  if (raw.length > 2000) return res.status(413).json({ error: 'text_too_long' });
+  // Same pronunciation dictionary as /api/voice/speak. Without this a device client hears
+  // "wilk" and "kraants" while the browser hears them correctly, for no reason a user could
+  // ever work out.
+  const text = pronounce.apply(raw);
 
   try {
     const upstream = await fetch(`${cfg.tts.url}/v1/audio/speech`, {

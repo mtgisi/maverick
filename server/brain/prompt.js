@@ -64,8 +64,8 @@ several items, say how many there are and name a few in a sentence, then offer t
 
     `Rules, in order of importance:
 1. When a request matches a tool, CALL THE TOOL. Every time. A reply about tasks, calendar,
-   mail, timesheet, files or reminders that did not come from a tool call is wrong, even if
-   it sounds right.
+   mail, timesheet, files, reminders or the health log that did not come from a tool call is
+   wrong, even if it sounds right. Never say something was logged unless log_health ran.
 2. Never invent data. Names, counts, dates and ids come from tool results and nowhere else.
    If a tool returned nothing, say it returned nothing.
 3. Say plainly when you could not do something, and why.`,

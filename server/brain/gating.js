@@ -13,6 +13,18 @@ const { brain } = require('../config');
 // Keyword table. Kept in one place and deliberately generous: a false positive costs a few
 // hundred tokens, a false negative costs the model the tool it needed.
 const KEYWORDS = {
+  // FIRST on purpose: groups often tie on score ("how many calories have I had today" also
+  // hits calendar on "today"), the sort is stable, and the loser of a tie misses the cap.
+  // A message naming a health word is about health.
+  // Phrases, not bare short words: plain includes() matching means 'ate' would hit "update"
+  // and "late", and 'ran' would hit "grant".
+  health: [
+    'calorie', 'kcal', 'protein', 'breakfast', 'lunch', 'dinner', 'snack', 'i ate', 'just ate',
+    'water', 'ounces', ' oz', 'steps', 'slept', 'sleep', 'weigh', 'weight', 'pounds', ' lbs',
+    'workout', 'worked out', 'work out', 'gym', 'lifted', 'lifting', 'went for a run', 'cardio',
+    'habit', 'meditat', 'log that', 'log it', 'undo that', 'scratch that', 'how am i doing',
+    'accountab',
+  ],
   calendar: [
     'calendar', 'schedule', 'event', 'events', 'meeting', 'meetings', 'appointment',
     'busy', 'free', 'agenda', 'booked', 'today', 'tomorrow', 'week', 'monday', 'tuesday',
@@ -147,7 +159,7 @@ const toOllama = tools => tools.map(t => ({
 
 // Groups that carry live data the model cannot know without asking. An answer about one of
 // these that did not come from a tool call is fabricated, by definition.
-const DATA_GROUPS = ['calendar', 'mail', 'timeclock', 'tasks', 'workspace'];
+const DATA_GROUPS = ['calendar', 'mail', 'timeclock', 'tasks', 'workspace', 'health'];
 
 // The obvious read for each data group, used when the model asks about one and then does
 // not call anything. Deterministic and read-only: no write tool is ever forced.
@@ -157,6 +169,7 @@ const PRIMARY_READ = {
   timeclock: 'get_timesheet',
   workspace: 'list_drive_files',
   mail: 'inbox_summary',
+  health: 'health_today',
 };
 
 module.exports = { select, toOllama, KEYWORDS, DATA_GROUPS, PRIMARY_READ, forget, carried };

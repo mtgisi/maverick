@@ -36,6 +36,10 @@ Conversation continuity = stored CC `session_id` per conversation.
 - `list_tasks` / `add_task` — charliework task manager (if `CHARLIEWORK_API_URL` set).
 - `list_bookmarks` — Powermark (if `BOOKMARKS_AGENT_TOKEN` set).
 - `container_status` — read-only `docker ps` summary (only if `ENABLE_DOCKER_TOOL=true` + socket mounted).
+- `log_health` / `health_today` / `undo_health_log` - daily health log. Plain statements and "undo that" are
+  parsed in code (`services/health-parse.js`) because qwen2.5:7b claims writes it never made; a guard in
+  `brain/index.js` replaces any remaining false "logged". Read-only share for the accountability Discord bot on
+  an internal-only network: see `docs/HEALTH-SHARE.md`.
 
 ## Auth
 - **Login** = Google OAuth (`passport-google-oauth20`), callback `/auth/callback`, restricted by

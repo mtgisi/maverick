@@ -347,3 +347,10 @@ button{background:none;border:none;cursor:pointer}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}
 }
+
+/* ===== Health log ===== */
+.hform{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--s2)}
+.hform.two{grid-template-columns:2fr 1fr}
+.hstat{cursor:default}
+.hstat .dimv{color:var(--dim);font-family:var(--mono);font-size:var(--t-lg)}
+.hshare{text-transform:none;letter-spacing:0;font-size:var(--t-xs);line-height:1.6;color:var(--muted)}

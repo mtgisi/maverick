@@ -108,6 +108,7 @@ app.use('/api/spaces', require('./routes/spaces'));
 app.use('/api/notes', require('./routes/notes'));
 app.use('/api/activity', require('./routes/activity'));
 app.use('/api/voice', require('./routes/voice'));
+app.use('/api/health', require('./routes/health'));
 app.get('/api/reminders', (req, res) =>
   res.json(db.prepare("SELECT id, text, fire_at, sent FROM reminders WHERE sent=0 ORDER BY fire_at ASC LIMIT 100").all()));
 
@@ -138,6 +139,9 @@ app.use(express.static(path.join(__dirname, '../public')));
 
 // --- Task mirror — poll charliework + goosework into the unified `tasks` table ---
 require('./services/tasks').startSync();
+
+// --- Health share for the accountability bot: own listener, internal network only ---
+require('./share').start();
 
 // --- Seed the speech pronunciation dictionary on first run ---
 require('./services/pronounce').seed();

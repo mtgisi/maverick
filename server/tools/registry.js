@@ -23,6 +23,7 @@ const charliework = require('../integrations/charliework');
 const tasks = require('../services/tasks');
 const windowOf = require('../brain/window');
 const pronounce = require('../services/pronounce');
+const health = require('../services/health');
 const cfg = require('../config');
 const bookmarks = require('../integrations/bookmarks');
 const containers = require('../integrations/containers');
@@ -640,6 +641,82 @@ const TOOLS = [
         const r = await pronounce.setDerived({ word: a.word, say_as: a.say_as }, cfg.tts.url);
         return `Got it. "${r.word}" will be spoken as "${r.say_as || r.phonemes}".`;
       } catch (e) { return `error: ${e.message}`; }
+    },
+  },
+
+  // ===== health =====
+  // Totals are computed by services/health.js and handed back in the result text, so the
+  // model reports numbers it read rather than numbers it added. These totals feed the
+  // accountability bot friends see; a model doing its own sums would put wrong numbers there.
+  {
+    name: 'log_health',
+    group: 'health',
+    tier: 'write',
+    description: 'Log what the user ate, drank, did or measured. Use for "I ate / had ...", '
+      + '"log ... calories", "drank 20 oz water", "worked out", "slept 7 hours", "weighed in at ...", '
+      + '"did my <habit>". Pass ONLY the fields the user stated, in one call. calories, protein_g and '
+      + 'water_oz ADD to the day. steps, sleep_hours and weight_lb REPLACE the day\'s value. Never '
+      + 'estimate a number the user did not say; if they say "had a burrito" with no calories, ask.',
+    schema: { type: 'object', properties: {
+      calories: { type: 'number', description: 'kcal eaten in this entry.' },
+      protein_g: { type: 'number', description: 'Grams of protein in this entry.' },
+      water_oz: { type: 'number', description: 'Ounces of water drunk in this entry.' },
+      steps: { type: 'number', description: 'Total steps for the day so far.' },
+      sleep_hours: { type: 'number', description: 'Hours slept last night.' },
+      weight_lb: { type: 'number', description: 'Body weight in pounds (a weigh-in).' },
+      workout: { type: 'string', description: 'What the workout was, e.g. "lifting", "3 mile run".' },
+      workout_minutes: { type: 'number', description: 'Workout length in minutes, if stated.' },
+      habit: { type: 'string', description: 'Name of a habit the user did, e.g. "meditate", "read".' },
+      day: { type: 'string', description: '"today" (default), "yesterday", or YYYY-MM-DD.' },
+    } },
+    handler: async (a, ctx = {}) => {
+      const d = health.resolveDay(a.day, ctx.now);
+      if (d.error) return `error: ${d.error}`;
+      const list = [];
+      for (const [arg, kind] of [['calories', 'calories'], ['protein_g', 'protein_g'], ['water_oz', 'water_oz'],
+        ['steps', 'steps'], ['sleep_hours', 'sleep_h'], ['weight_lb', 'weight_lb']]) {
+        if (a[arg] != null) list.push({ kind, value: a[arg] });
+      }
+      if (a.workout || a.workout_minutes != null) list.push({ kind: 'workout', value: a.workout_minutes, label: a.workout });
+      if (a.habit) list.push({ kind: 'habit', label: a.habit });
+      if (!list.length) return 'error: nothing to log. Pass at least one field the user stated, e.g. calories or workout.';
+      try {
+        const r = health.log(d.day, list, ctx.surface || 'web');
+        const when = d.day === health.dayInTZ(ctx.now) ? 'today' : d.day;
+        return `Logged ${r.rows.map(health.describeEntry).join(', ')} for ${when}. `
+          + `${when === 'today' ? 'Today' : d.day} so far: ${health.describeDay(health.summarise(d.day))}.`;
+      } catch (e) { return `error: ${e.message}`; }
+    },
+  },
+  {
+    name: 'health_today',
+    group: 'health',
+    tier: 'read',
+    description: 'Read the day\'s health totals: calories, protein, water, steps, sleep, weigh-in, '
+      + 'workouts and habits. Use for "how many calories have I had", "did I work out", "how am I doing today".',
+    schema: { type: 'object', properties: {
+      day: { type: 'string', description: '"today" (default), "yesterday", or YYYY-MM-DD.' },
+    } },
+    handler: async (a, ctx = {}) => {
+      const d = health.resolveDay(a.day, ctx.now);
+      if (d.error) return `error: ${d.error}`;
+      const s = health.summarise(d.day);
+      if (!s.entries) return `Nothing logged for ${d.day} yet.`;
+      return `${d.day}: ${health.describeDay(s)}.`;
+    },
+  },
+  {
+    name: 'undo_health_log',
+    group: 'health',
+    tier: 'write',
+    description: 'Take back the most recent health entry (everything from the last log_health call). '
+      + 'Use for "undo that", "scratch that", "that was wrong", "delete the last entry".',
+    schema: { type: 'object', properties: {} },
+    handler: async () => {
+      const r = health.undoLast();
+      if (!r) return 'Nothing logged in the last 24 hours to undo.';
+      return `Removed ${r.removed.map(health.describeEntry).join(', ')} from ${r.day}. `
+        + `${r.day} now: ${health.describeDay(health.summarise(r.day))}.`;
     },
   },
 

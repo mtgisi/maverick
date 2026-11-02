@@ -178,6 +178,21 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
   );
+
+  -- Daily health log (server/services/health.js). Append-only entries; a day's totals are
+  -- derived in code. day is a local calendar date as text, never an instant.
+  CREATE TABLE IF NOT EXISTS health_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    day TEXT NOT NULL,          -- 'YYYY-MM-DD' in the app timezone
+    kind TEXT NOT NULL,         -- calories|protein_g|water_oz|steps|sleep_h|weight_lb|workout|habit
+    value REAL,                 -- amount; workout minutes (nullable); 1 for a habit
+    label TEXT,                 -- workout description or habit slug
+    source TEXT,                -- 'web' | 'watch' | 'mcp' | 'api' ...
+    batch TEXT,                 -- one id per log call, so "undo that" takes back the whole call
+    created_at TEXT DEFAULT (datetime('now')),
+    deleted_at TEXT             -- soft delete, so a retraction stays on record
+  );
+  CREATE INDEX IF NOT EXISTS idx_health_day ON health_entries(day, deleted_at);
 `);
 
 // Additive column migrations. better-sqlite3 has no ADD COLUMN IF NOT EXISTS, so guard each

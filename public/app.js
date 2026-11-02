@@ -79,6 +79,7 @@ const S = {
   // tasks (unified charliework + goosework mirror)
   taskSource:'All', taskCounts:null, taskSources:[], tasksUnsynced:0,
   calendars:null, pron:null, pronForm:null,
+  health:null, healthForm:null,
   // voice
   convMode:false, dictating:false, voiceState:'idle', voiceError:'', streaming:'', tool:null,
 };
@@ -230,6 +231,7 @@ async function send(text){
 
 const TOOL_LABELS={
   list_calendar_events:'checking your calendar', list_calendars:'checking your calendars',
+  log_health:'logging that', health_today:'checking your log', undo_health_log:'taking that back',
   list_tasks:'reading your tasks', add_task:'adding the task', complete_task:'marking it done',
   reschedule_task:'moving the due date', ask_supervisor:'filing the question',
   get_timesheet:'reading your timesheet', propose_timesheet_change:'preparing the change',
@@ -456,6 +458,7 @@ function homeView(){
       <div class="v"><span class="bignum">${S.pending.length}</span></div>
       <div class="m">${S.pending.length?'awaiting confirmation':'all clear'}</div>
     </div>
+    ${healthTile()}
     ${demoTiles()}
     <div class="card span2 row-between" data-go="spaces" style="background:linear-gradient(120deg,rgba(156,169,128,.12),rgba(255,255,255,.03));border-color:rgba(156,169,128,.22)">
       <div>
@@ -804,10 +807,162 @@ function pronounceView(){
   return back + form + rows;
 }
 
+/* ---------- health log: what the accountability bot reports to friends ---------- */
+
+async function loadHealth(){
+  try { S.health = await api('/health/day/today'); }
+  catch(_){ S.health = null; }
+}
+
+const blankHealthForm = () => ({ calories:'', protein_g:'', water_oz:'', workout:'', workout_minutes:'',
+  habit:'', steps:'', sleep_h:'', weight_lb:'', busy:false, error:'' });
+
+const fmtN = v => v==null ? null : Math.round(v).toLocaleString('en-US');
+
+function healthTile(){
+  const s = S.health && S.health.summary;
+  if(!s) return '';
+  const worked = s.workouts.length>0;
+  return `<div class="card" data-detail="health">
+      <div class="k">Health · today</div>
+      <div class="v"><span class="bignum">${s.calories!=null?fmtN(s.calories):'—'}</span></div>
+      <div class="m">${s.calories!=null?'kcal · ':''}${worked?'workout done':'no workout yet'}</div>
+    </div>`;
+}
+
+// One line per entry, worded the same way the assistant reports them.
+function healthEntryText(e){
+  const v=e.value;
+  switch(e.kind){
+    case 'calories': return `${fmtN(v)} kcal`;
+    case 'protein_g': return `${fmtN(v)} g protein`;
+    case 'water_oz': return `${fmtN(v)} oz water`;
+    case 'steps': return `${fmtN(v)} steps`;
+    case 'sleep_h': return `${+(+v).toFixed(1)} h sleep`;
+    case 'weight_lb': return `Weigh-in ${+(+v).toFixed(1)} lb`;
+    case 'workout': return `Workout: ${e.label}${v?` · ${fmtN(v)} min`:''}`;
+    case 'habit': return `Habit: ${e.label}`;
+    default: return e.kind;
+  }
+}
+
+async function saveHealthForm(){
+  const f=S.healthForm||(S.healthForm=blankHealthForm());
+  const num = k => String(f[k]).trim()==='' ? null : Number(f[k]);
+  const entries=[];
+  for(const k of ['calories','protein_g','water_oz','steps','sleep_h','weight_lb']){
+    const v=num(k);
+    if(v!=null){
+      if(!Number.isFinite(v)){ f.error=`${k.replace('_',' ')} needs a number.`; render(); return; }
+      entries.push({kind:k, value:v});
+    }
+  }
+  if(f.workout.trim() || num('workout_minutes')!=null) entries.push({kind:'workout', value:num('workout_minutes'), label:f.workout.trim()});
+  if(f.habit.trim()) entries.push({kind:'habit', label:f.habit.trim()});
+  if(!entries.length){ f.error='Fill in at least one field.'; render(); return; }
+  f.busy=true; f.error=''; render();
+  try {
+    const r=await api('/health/log',{method:'POST',body:JSON.stringify({entries})});
+    if(r.error){ f.error=r.error; f.busy=false; render(); return; }
+    S.healthForm=blankHealthForm();
+  } catch(_){ f.error='Could not save that.'; f.busy=false; render(); return; }
+  await loadHealth(); render();
+}
+
+async function delHealthEntry(id){
+  if(!confirm('Remove this entry? Your friends will see the updated totals at the next check.')) return;
+  try { await api('/health/entries/'+id,{method:'DELETE'}); } catch(_){}
+  await loadHealth(); render();
+}
+
+function healthView(){
+  const f=S.healthForm||(S.healthForm=blankHealthForm());
+  const back = `<div class="dhead">
+    <button class="back" data-act="back" aria-label="Back">←</button>
+    <div class="grow"><div class="sub">Today</div><div class="ttl">Health</div></div>
+  </div>`;
+  if(!S.health) return back + `<div class="empty">Loading…</div>`;
+  const s=S.health.summary;
+
+  const stat = (label, value, unit) => `<div class="card hstat">
+      <div class="k">${label}</div>
+      <div class="v">${value==null?'<span class="dimv">—</span>':`<span class="bignum">${value}</span>`}</div>
+      <div class="m">${value==null?'not logged':unit}</div>
+    </div>`;
+  const stats = `<div class="grid">
+    ${stat('Calories', fmtN(s.calories), 'kcal')}
+    ${stat('Protein', fmtN(s.protein_g), 'g')}
+    ${stat('Water', fmtN(s.water_oz), 'oz')}
+    ${stat('Steps', fmtN(s.steps), 'steps')}
+    ${stat('Sleep', s.sleep_h==null?null:+s.sleep_h.toFixed(1), 'hours')}
+    ${stat('Weigh-in', s.weight_lb==null?null:+s.weight_lb.toFixed(1), 'lb')}
+    <div class="card hstat span2">
+      <div class="k">Workout${s.habits.length?' · habits':''}</div>
+      <div class="v">${s.workouts.length?esc(s.workouts.map(w=>w.label+(w.minutes?` (${fmtN(w.minutes)} min)`:'')).join(', ')):'<span class="dimv">None yet</span>'}</div>
+      ${s.habits.length?`<div class="m">${esc(s.habits.join(', '))}</div>`:''}
+    </div>
+  </div>`;
+
+  const inp = (key, label, ph, mode='decimal') => `<label class="fld">
+      <span class="fl">${label}</span>
+      <input data-hf="${key}" value="${esc(f[key])}" placeholder="${ph}" ${mode?`inputmode="${mode}"`:''} autocomplete="off">
+    </label>`;
+  const form = `<div class="section-label">Log something</div>
+  <div class="lead form">
+    <div class="hform">
+      ${inp('calories','Calories','650')}
+      ${inp('protein_g','Protein g','40')}
+      ${inp('water_oz','Water oz','20')}
+    </div>
+    <div class="hform two">
+      ${inp('workout','Workout','Lifting','')}
+      ${inp('workout_minutes','Minutes','45','numeric')}
+    </div>
+    <div class="hform">
+      ${inp('steps','Steps today','8000','numeric')}
+      ${inp('sleep_h','Sleep h','7.5')}
+      ${inp('weight_lb','Weight lb','')}
+    </div>
+    ${inp('habit','Habit done','Meditate','')}
+    <div class="fh dim">Calories, protein and water add to today. Steps, sleep and weight replace today's value. You can also just tell the assistant: “log 650 calories and 40 grams of protein”.</div>
+    <div class="actions">
+      <button class="btn" data-act="health-save" ${f.busy?'disabled':''}>${f.busy?'Saving…':'Log it'}</button>
+    </div>
+    ${f.error?`<div class="fe">${esc(f.error)}</div>`:''}
+  </div>`;
+
+  const list = S.health.entries.length ? `<div class="section-label">Today's entries</div>
+    <div class="cal-list">${S.health.entries.slice().reverse().map(e=>`
+      <div class="cal-row">
+        <div class="cal-name">
+          <div class="n">${esc(healthEntryText(e))}</div>
+          <div class="m">${esc(new Date(e.created_at.replace(' ','T')+'Z').toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}))} · ${esc(e.source||'')}</div>
+        </div>
+        <div class="seg"><button class="seg-btn" data-health-del="${e.id}" title="Remove">✕</button></div>
+      </div>`).join('')}</div>` : '';
+
+  // Exactly what the bot receives, so nothing about the share is a surprise.
+  const sh=S.health.shared;
+  const shared = `<div class="section-label">What the accountability bot sees</div>
+    <div class="cal-row"><div class="cal-name"><div class="m hshare">${esc([
+      `workout ${sh.workout.completed?'done':'not done'}`,
+      sh.nutrition.calories!=null?`${fmtN(sh.nutrition.calories)} kcal`:'calories: no data',
+      sh.nutrition.protein_g!=null?`${fmtN(sh.nutrition.protein_g)} g protein`:'protein: no data',
+      sh.nutrition.water_oz!=null?`${fmtN(sh.nutrition.water_oz)} oz water`:'water: no data',
+      sh.activity.steps!=null?`${fmtN(sh.activity.steps)} steps`:'steps: no data',
+      sh.sleep.hours!=null?`${sh.sleep.hours} h sleep`:'sleep: no data',
+      `weigh-in ${sh.weighin.logged?'logged':'not logged'}${sh.weighin.weight_lb!=null?` (${sh.weighin.weight_lb} lb)`:''}`,
+      ...Object.keys(sh.habits).map(h=>`habit ${h}`),
+    ].join(' · '))}</div></div></div>`;
+
+  return back + stats + form + list + shared;
+}
+
 /* demo detail views (Aureo design, placeholder data) */
 function detailView(){
   if(S.detail==='calendars') return calendarsView();
   if(S.detail==='pronounce') return pronounceView();
+  if(S.detail==='health') return healthView();
   const TITLES={nutrition:'Nutrition',sleep:'Sleep',finance:'Finance',workout:'Training',notes:'Notes',notifications:'Notifications',pronounce:'Pronunciation'};
   const DEMO=['nutrition','sleep','finance','workout'];
   const back = `<div class="dhead">
@@ -918,7 +1073,7 @@ function renderAll(){
   // from the avatar in the home header. Every other tab had no way in at all. It now carries
   // a settings button on every screen except home, where the header already has one, so
   // there is always exactly one way in and it is always in the same corner.
-  const titles={home:'Dashboard',calendar:'Calendar',tasks:'Tasks',spaces:'Spaces',chat:brand(),calendars:'Calendars',pronounce:'Pronunciation'};
+  const titles={home:'Dashboard',calendar:'Calendar',tasks:'Tasks',spaces:'Spaces',chat:brand(),calendars:'Calendars',pronounce:'Pronunciation',health:'Health'};
   const title = esc(S.detail?titles[S.detail]||'Detail':titles[S.tab]||'');
   document.getElementById('topbar').innerHTML =
     `<div class="desktop-only">
@@ -1005,13 +1160,14 @@ let deferredPrompt=null;
 window.addEventListener('beforeinstallprompt', e=>{ e.preventDefault(); deferredPrompt=e; });
 
 document.addEventListener('click', e=>{
-  const t=e.target.closest('[data-go],[data-role],[data-act],[data-detail],[data-task],[data-tsrc],[data-cal-mode],[data-pron-play],[data-pron-edit],[data-pron-del],[data-space-add],[data-space-edit],[data-space-del],[data-space],[data-confirm],[data-cancel],[data-suggest]');
+  const t=e.target.closest('[data-go],[data-role],[data-act],[data-detail],[data-task],[data-tsrc],[data-cal-mode],[data-pron-play],[data-pron-edit],[data-pron-del],[data-space-add],[data-space-edit],[data-space-del],[data-space],[data-confirm],[data-cancel],[data-suggest],[data-health-del]');
   if(!t) return;
   if('spaceAdd' in t.dataset){ addSpace(); return; }
   if(t.dataset.spaceEdit){ editSpace(t.dataset.spaceEdit); return; }
   if(t.dataset.spaceDel){ delSpace(t.dataset.spaceDel); return; }
   if(t.dataset.go){ S.tab=t.dataset.go; S.detail=null; render(); return; }
   if(t.dataset.role){ S.role=t.dataset.role; render(); return; }
+  if(t.dataset.healthDel){ delHealthEntry(Number(t.dataset.healthDel)); return; }
   if(t.dataset.pronPlay){ previewPronunciation(t.dataset.pronPlay); return; }
   if(t.dataset.pronDel){ delPronunciation(t.dataset.pronDel); return; }
   if(t.dataset.pronEdit){ editPronunciation(t.dataset.pronEdit); return; }
@@ -1023,6 +1179,7 @@ document.addEventListener('click', e=>{
     S.detail=t.dataset.detail; S.drawer=false; render();
     if(S.detail==='calendars') loadCalendars().then(render);
     if(S.detail==='pronounce') loadPronunciations().then(render);
+    if(S.detail==='health') loadHealth().then(render);
     return;
   }
   if(t.dataset.space){ S.role=t.dataset.space; S.tab='home'; S.detail=null; S.drawer=false; render(); return; }
@@ -1054,6 +1211,7 @@ document.addEventListener('click', e=>{
   else if(a==='pron-preview-form'){ previewPronunciation(S.pronForm.word||S.pronForm.say_as); }
   else if(a==='pron-preview-word'){ previewPronunciation(S.pronForm.word); }
   else if(a==='pron-cancel'){ S.pronForm=blankPronForm(); render(); }
+  else if(a==='health-save'){ saveHealthForm(); }
   else if(a==='send'){ const inp=document.getElementById('chatInput'); S.chatInput=inp?inp.value:''; send(); }
   else if(a==='chat-plan'){ send('Plan my day and tell me what to start with.'); }
   else if(a==='clear-chat'){
@@ -1085,6 +1243,8 @@ document.addEventListener('pointercancel', ()=>{ if(S.dictating) dictateStop(); 
 document.addEventListener('input', e=>{
   if(e.target.id==='chatInput'){ S.chatInput=e.target.value; return; }
   // Form fields mirror into state, or a render triggered by anything else wipes what was typed.
+  const hf=e.target.dataset && e.target.dataset.hf;
+  if(hf){ (S.healthForm||(S.healthForm=blankHealthForm()))[hf]=e.target.value; return; }
   const f=e.target.dataset && e.target.dataset.pf;
   if(f && S.pronForm){
     S.pronForm[f]=e.target.value;
@@ -1098,7 +1258,7 @@ document.getElementById('scrim').addEventListener('click', ()=>{ S.drawer=false;
 (async ()=>{
   try { await loadConfig(); document.title=brand(); } catch(_){}
   render();
-  await Promise.all([loadSpaces(), loadEvents(), loadTasks()]);
+  await Promise.all([loadSpaces(), loadEvents(), loadTasks(), loadHealth()]);
   render();
   if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
 })();

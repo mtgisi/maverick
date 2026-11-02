@@ -15,7 +15,11 @@ services:
       # and uncomment the next line (mounts docker socket read-only):
       # - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
-      - proxy
+      proxy: {}
+      # Health share for the accountability bot (server/share.js). The share listener binds
+      # to THIS address only (SHARE_BIND in .env), so it is unreachable from `proxy` and the LAN.
+      share:
+        ipv4_address: 172.28.0.2
 
   # Self-hosted speech-to-text for watch dictation (private; audio never leaves the server).
   # Internal only — no Caddy block, not exposed publicly. Model cached in the named volume.
@@ -35,6 +39,14 @@ networks:
   proxy:
     external: true
     name: proxy
+  # Internal-only: no route off the host, no published ports. maverick and the
+  # accountability bot are the only members. See docs/HEALTH-SHARE.md.
+  share:
+    name: maverick-share
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.28.0.0/29
 
 volumes:
   whisper-cache:

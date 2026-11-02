@@ -53,6 +53,45 @@ const argsObject = a => {
 //   emit({ type:'token',      text })          // only on the streaming final round
 //
 // Returns { reply, rounds, toolsUsed, stopped }.
+// Health tools that change the log, and wording that claims such a change happened.
+const HEALTH_WRITES = new Set(['log_health', 'undo_health_log']);
+const CLAIMS_WRITE = /\b(logged|recorded|saved|added|tracked|noted|updated|marked|cleared|removed|deleted|undid|undone|scratched|took (that|it) (back|off))\b/i;
+
+const healthParse = require('../services/health-parse');
+
+// Decide whether this message is a health statement or an undo the code can handle alone.
+function healthShortcut(conversationId, message) {
+  const inScope = gating.carried(conversationId).includes('health');
+  if (healthParse.isUndo(message, inScope)) {
+    gating.select(message, { conversationId });   // keep health in scope for a follow-up
+    return { tool: 'undo_health_log', args: {} };
+  }
+  const args = healthParse.parseLog(message);
+  if (!args) return null;
+  gating.select(message, { conversationId });
+  return { tool: 'log_health', args };
+}
+
+// What to say instead of a false "logged". Specific to why nothing could be logged.
+function falseClaimReply(message) {
+  const t = healthParse.normalise(message);
+  if (/\b(didn'?t|did not|haven'?t|skip(ped)?|missed|no)\b/.test(t)) {
+    return "Nothing to log for that. If nothing gets logged, today counts as a miss on its own.";
+  }
+  if (/\b(ate|eat|had|breakfast|lunch|dinner|snack|meal|burrito|pizza|sandwich|salad)\b/.test(t)) {
+    return 'I didn\'t log that yet. How many calories was it? Say something like "log 800 calories '
+      + 'and 35 grams of protein".';
+  }
+  return "I didn't actually save or change anything there. Say it once more with the "
+    + 'details, like "log 45 minutes of lifting" or "undo the last health entry".';
+}
+
+// Tool-result wording is written to be read. Spoken, "kcal" and "g" come out as letters.
+const speakable = s => String(s)
+  .replace(/\bkcal\b/g, 'calories').replace(/(\d) g protein/g, '$1 grams of protein')
+  .replace(/(\d) oz water/g, '$1 ounces of water').replace(/(\d) h sleep/g, '$1 hours of sleep')
+  .replace(/(\d) min\b/g, '$1 minutes').replace(/(\d) lb\b/g, '$1 pounds');
+
 async function run(conversationId, message, opts = {}) {
   const { emit = null, voice = false, surface = 'web', stream = false, signal = null } = opts;
   const started = Date.now();
@@ -90,12 +129,32 @@ async function run(conversationId, message, opts = {}) {
   const messages = context.assemble({ conversationId, systemPrompt, userMessage: message });
   context.append(conversationId, { role: 'user', content: message });
 
+  // Health statements and "undo that" are parsed in code, not left to the model; see
+  // services/health-parse.js for the measurement that forced this. The tool still runs
+  // through dispatch(), so validation, limits and the audit row are identical.
+  const short = healthShortcut(conversationId, message);
+  if (short) {
+    if (emit) emit({ type: 'tool_start', tool: short.tool });
+    const out = await dispatch(short.tool, short.args, {
+      conversationId, actor: 'system', surface, now: new Date(), tz: TZ,
+    });
+    if (emit) emit({ type: 'tool_end', tool: short.tool, ok: out.ok, preview: String(out.result).slice(0, 160) });
+    context.append(conversationId, { role: 'tool', content: out.result, toolName: short.tool });
+    let reply = out.ok ? out.result : `That didn't save: ${String(out.result).replace(/^error:\s*/, '')}`;
+    if (voice) reply = speakable(reply);
+    if (emit) emit({ type: 'token', text: reply });
+    context.append(conversationId, { role: 'assistant', content: reply });
+    return finish({ conversationId, reply, rounds: 0, toolsUsed: [{ tool: short.tool, ok: out.ok, parsed: true }],
+      stopped: null, started });
+  }
+
   const sticky = [];
   const seen = new Map();
   const toolsUsed = [];
   let rounds = 0;
   let stopped = null;
   let nudged = false;
+  let healthNudged = false;
 
   while (rounds < brain.maxRounds) {
     if (Date.now() > deadline) { stopped = 'timeout'; break; }
@@ -178,6 +237,39 @@ async function run(conversationId, message, opts = {}) {
         if (emit) emit({ type: 'discard' });
         reply = "I couldn't check that just now, so I'd rather not guess. Ask me again?";
         console.warn(`[brain] ${conversationId} answered a data question with no tool available`);
+      }
+
+      // The model SAYS it logged or undid something, but no health write ran this turn.
+      // Measured 2026-11-02: asked "I lifted for 45 minutes" and "undo that", qwen2.5:7b
+      // replied "Logged a workout" and "Cleared the last entry" with no tool call at all.
+      // These numbers go to the accountability bot, so a false "logged" is a false report
+      // to other people. The read guard above cannot help: a write is never run on the
+      // model's behalf. So: one retry naming the omission, then, if it still claims a write
+      // it did not make, replace the claim with the truth.
+      // Any successful write this turn (a task added, a memory saved) owns the "added"; only
+      // a turn that changed nothing at all is checked.
+      const wroteSomething = toolsUsed.some(t => t.ok && (HEALTH_WRITES.has(t.tool)
+        || ['write', 'privileged'].includes((require('../tools/registry').get(t.tool) || {}).tier)));
+      // Questions are exempt: "you've logged 1,750 kcal today" is a correct answer to one.
+      const asked = healthParse.QUESTION.test(healthParse.normalise(message).trim());
+      if (!wroteSomething && !asked && groups.includes('health') && CLAIMS_WRITE.test(reply)) {
+        if (!healthNudged) {
+          healthNudged = true;
+          if (emit) emit({ type: 'discard' });
+          messages.push({ role: 'assistant', content: reply });
+          messages.push({
+            role: 'system',
+            content: 'You did not call any tool, so NOTHING was saved or removed. To log, call '
+              + 'log_health. To take something back, call undo_health_log. Call the tool now. If '
+              + 'the user gave no number to log, ask for it instead.',
+          });
+          console.warn(`[brain] ${conversationId} claimed a health write with no tool call; retrying`);
+          continue;
+        }
+        if (emit) emit({ type: 'discard' });
+        stopped = 'false_write_claim';
+        reply = falseClaimReply(message);
+        console.warn(`[brain] ${conversationId} claimed a health write twice with no tool call; replaced`);
       }
 
       if (!reply) {

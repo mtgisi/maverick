@@ -11,3 +11,4 @@ _design/
 
 # watch build config holds the device token — never commit
 watch/config.js
+*.secret

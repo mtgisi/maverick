@@ -105,5 +105,15 @@ module.exports = {
 
   dockerTool: String(process.env.ENABLE_DOCKER_TOOL || '').toLowerCase() === 'true',
   deviceToken: process.env.DEVICE_TOKEN || '',
+
+  // Read-only health share for the accountability bot (server/share.js). A separate listener
+  // bound to an internal-only docker network, never routed by Caddy. Only the SHA-256 of the
+  // bot's token lives here, so this env file cannot be used to impersonate the bot.
+  share: {
+    tokenSha256: (process.env.SHARE_TOKEN_SHA256 || '').trim().toLowerCase(),
+    bind: process.env.SHARE_BIND || '',              // e.g. 172.28.0.2; blank = share API off
+    port: Number(process.env.SHARE_PORT || 3001),
+    shareWeight: String(process.env.HEALTH_SHARE_WEIGHT || '').toLowerCase() === 'true',
+  },
   whisperUrl: process.env.WHISPER_URL || 'http://maverick-whisper:9000',
 };
